@@ -3,7 +3,7 @@ package goortc
 import (
 	"math"
 
-	"github.com/pion/rtp"
+	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -49,8 +49,8 @@ func (router *Router) AddProducer(producer *Producer) error {
 	return nil
 }
 
-func (router *Router) OnRTPPacket() OnRTPHandlerFunc {
-	return func(rtp *rtp.Packet) {
+func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
+	return func(rtp *buffer.ExtPacket) {
 
 	}
 }
