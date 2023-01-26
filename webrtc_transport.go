@@ -1,6 +1,8 @@
 package goortc
 
 import (
+	"math"
+
 	"github.com/hashicorp/go-multierror"
 	"github.com/pion/webrtc/v3"
 )
@@ -8,7 +10,7 @@ import (
 type WebRTCTransport struct {
 	id uint
 
-	api              *webrtc.API
+	router           *Router
 	iceGatherer      *webrtc.ICEGatherer
 	iceParams        webrtc.ICEParameters
 	sctpCapabilities webrtc.SCTPCapabilities
@@ -16,6 +18,8 @@ type WebRTCTransport struct {
 	iceConn  *webrtc.ICETransport
 	dtlsConn *webrtc.DTLSTransport
 	sctpConn *webrtc.SCTPTransport
+
+	currentProducerId uint
 }
 
 type TransportCapabilities struct {
@@ -25,8 +29,11 @@ type TransportCapabilities struct {
 	SCTPCapabilities webrtc.SCTPCapabilities `json:"sctp_capabilities"`
 }
 
-func NewWebRTCTransport(id uint, api *webrtc.API) (*WebRTCTransport, error) {
-	iceGatherer, err := api.NewICEGatherer(webrtc.ICEGatherOptions{})
+func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
+	api := router.api
+	iceGatherer, err := api.NewICEGatherer(webrtc.ICEGatherOptions{
+		ICEGatherPolicy: webrtc.ICETransportPolicyAll,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +47,7 @@ func NewWebRTCTransport(id uint, api *webrtc.API) (*WebRTCTransport, error) {
 
 	return &WebRTCTransport{
 		id:          id,
-		api:         api,
+		router:      router,
 		iceGatherer: iceGatherer,
 		iceConn:     ice,
 		dtlsConn:    dtls,
@@ -48,7 +55,7 @@ func NewWebRTCTransport(id uint, api *webrtc.API) (*WebRTCTransport, error) {
 	}, nil
 }
 
-func (t *WebRTCTransport) getCapabilities() (*TransportCapabilities, error) {
+func (t *WebRTCTransport) GetCapabilities() (*TransportCapabilities, error) {
 	gatherFinished := make(chan struct{})
 
 	t.iceGatherer.OnLocalCandidate(func(i *webrtc.ICECandidate) {
@@ -74,7 +81,9 @@ func (t *WebRTCTransport) getCapabilities() (*TransportCapabilities, error) {
 	if err != nil {
 		panic(err)
 	}
-
+	// pion webrtc is not using agent's ice-lite settings on the
+	// GetLocalParameters() response. So I am manully overriding it here
+	iceParams.ICELite = true
 	t.iceParams = iceParams
 
 	dtlsParams, err := t.dtlsConn.GetLocalParameters()
@@ -95,7 +104,7 @@ func (t *WebRTCTransport) getCapabilities() (*TransportCapabilities, error) {
 
 func (t *WebRTCTransport) Connect(dtlsParams webrtc.DTLSParameters) error {
 	iceRole := webrtc.ICERoleControlled
-	err := t.iceConn.Start(nil, t.iceParams, &iceRole)
+	err := t.iceConn.Start(t.iceGatherer, t.iceParams, &iceRole)
 	if err != nil {
 		return err
 	}
@@ -118,4 +127,40 @@ func (t *WebRTCTransport) Stop() error {
 	err := t.iceConn.Stop()
 	multierror.Append(err, t.dtlsConn.Stop(), t.sctpConn.Stop())
 	return err
+}
+
+func (t *WebRTCTransport) Produce(kind webrtc.RTPCodecType, parameters RTPParameters) (*Producer, error) {
+	receiver, err := t.router.api.NewRTPReceiver(kind, t.dtlsConn)
+	if err != nil {
+		return nil, errReceiverNotCreated(err)
+	}
+	// extParams := GetExtendedParameters(parameters, t.mediaEngine)
+
+	params := GetRTPReceivingParameters(parameters)
+	err = receiver.Receive(params)
+	receiver.SetRTPParameters(webrtc.RTPParameters{
+		Codecs: []webrtc.RTPCodecParameters{
+			parameters.Codecs[0],
+		},
+	})
+	if err != nil {
+		return nil, errSettingReceiverParameters(err)
+	}
+	producer := newProducer(t.getNextProducerId(), receiver, t, parameters)
+
+	err = t.router.AddProducer(producer)
+	if err != nil {
+		return nil, err
+	}
+
+	return producer, nil
+
+}
+
+func (t *WebRTCTransport) getNextProducerId() uint {
+	if t.currentProducerId == math.MaxUint16 {
+		panic("Why the hell the id is still uint16!")
+	}
+	t.currentProducerId += 1
+	return t.currentProducerId
 }
