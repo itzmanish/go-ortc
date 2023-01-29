@@ -15,6 +15,10 @@ var (
 		return fmt.Errorf("setting receiver parameters failed: %s", e)
 	}
 
+	errProducerNotFound = func(id uint) error {
+		return fmt.Errorf("producer not found: %v", id)
+	}
+
 	errFailedToCreateDownTrack = func(e error) error {
 		return fmt.Errorf("failed to create down track: %s", e)
 	}

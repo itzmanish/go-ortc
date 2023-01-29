@@ -12,9 +12,10 @@ import (
 type Producer struct {
 	Id uint
 
-	closed    atomicBool
-	closeOnce sync.Once
-	paused    atomicBool
+	closed      atomicBool
+	closeOnce   sync.Once
+	paused      atomicBool
+	isSimulcast bool
 
 	parameters RTPParameters
 	receiver   *webrtc.RTPReceiver
@@ -28,20 +29,22 @@ type Producer struct {
 	onCloseHandler OnProducerCloseHandlerFunc
 }
 
-type OnRTPPacketHandlerFunc func(rtp *buffer.ExtPacket)
+type OnRTPPacketHandlerFunc func(producerId uint, rtp *buffer.ExtPacket)
 type OnProducerCloseHandlerFunc func()
 
-func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTransport, params RTPParameters) *Producer {
+func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTransport, params RTPParameters, simulcast bool) *Producer {
 	track := receiver.Track()
-	return &Producer{
-		Id:         id,
-		receiver:   receiver,
-		transport:  transport,
-		track:      track,
-		parameters: params,
-		trackID:    track.ID(),
-		streamID:   track.StreamID(),
+	producer := &Producer{
+		Id:          id,
+		receiver:    receiver,
+		transport:   transport,
+		track:       track,
+		parameters:  params,
+		trackID:     track.ID(),
+		streamID:    track.StreamID(),
+		isSimulcast: simulcast,
 	}
+	return producer
 }
 
 func (p *Producer) SetTrackMeta(trackId, streamId string) {
@@ -89,7 +92,7 @@ func (p *Producer) readRTP() {
 		})
 	}()
 	for {
-		logger.Infof("Producer %s: reading RTP packets", p.Id)
+		logger.Infof("Producer %v: reading RTP packets", p.Id)
 		pkt, err := p.buffers.ReadExtended()
 		if err == io.EOF {
 			return
@@ -99,7 +102,7 @@ func (p *Producer) readRTP() {
 		}
 		logger.Info("readRTP", "pkt", pkt)
 		if p.onRTPPacket != nil {
-			p.onRTPPacket(pkt)
+			p.onRTPPacket(p.Id, pkt)
 		}
 	}
 }

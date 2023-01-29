@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/sirupsen/logrus"
@@ -10,7 +11,15 @@ var defaultLogger Logger
 
 type loggerStruct struct {
 	log *logrus.Entry
+	logrus.Level
 }
+
+type Option struct {
+	logrus.Level
+	logrus.Fields
+}
+
+type Options func(*Option)
 
 type Logger interface {
 	Info(msg ...any)
@@ -21,27 +30,39 @@ type Logger interface {
 	Warnf(format string, msg ...any)
 	Error(msg ...any)
 	Errorf(format string, msg ...any)
+	Trace(msg ...any)
+	Tracef(format string, msg ...any)
 
 	WithField(key string, value interface{}) Logger
 }
 
 func init() {
-	// Log as JSON instead of the default ASCII formatter.
-	// logrus.SetFormatter(&logrus.JSONFormatter{})
-
-	// Output to stdout instead of the default stderr
-	// Can be any io.Writer, see below for File example
-	logrus.SetOutput(os.Stdout)
-
-	// Only log the warning severity or above.
-	logrus.SetLevel(logrus.InfoLevel)
-	defaultLogger = NewLogger("sfu")
+	defaultLogger = NewLogger("sfu", WithLevel("info"))
 }
 
-func NewLogger(name string) Logger {
-	logr := logrus.WithField("name", name)
+func NewLogger(name string, opts ...Options) Logger {
+	options := Option{
+		Level: logrus.InfoLevel,
+	}
+	for _, o := range opts {
+		o(&options)
+	}
+
+	logr := logrus.New()
+	logr.SetLevel(options.Level)
+	logr.SetOutput(os.Stdout)
 	return &loggerStruct{
-		log: logr,
+		log: logr.WithField("name", name),
+	}
+}
+
+func WithLevel(level string) Options {
+	return func(o *Option) {
+		l, e := logrus.ParseLevel(level)
+		if e != nil {
+			fmt.Println("provided level is not a valid level", level)
+		}
+		o.Level = l
 	}
 }
 
@@ -67,6 +88,10 @@ func (logger *loggerStruct) Error(msg ...any) {
 	logger.log.Errorln(msg...)
 }
 
+func (logger *loggerStruct) Trace(msg ...any) {
+	logger.log.Traceln(msg...)
+}
+
 func (logger *loggerStruct) Infof(format string, msg ...any) {
 	logger.log.Infof(format, msg...)
 }
@@ -81,6 +106,10 @@ func (logger *loggerStruct) Warnf(format string, msg ...any) {
 
 func (logger *loggerStruct) Errorf(format string, msg ...any) {
 	logger.log.Errorf(format, msg...)
+}
+
+func (logger *loggerStruct) Tracef(format string, msg ...any) {
+	logger.log.Tracef(format, msg...)
 }
 
 func Info(msg ...any) {

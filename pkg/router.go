@@ -1,9 +1,12 @@
 package goortc
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
+	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -13,24 +16,30 @@ import (
 type Router struct {
 	Id uint
 
-	transports []*WebRTCTransport
-	producers  []*Producer
-	consumers  []*Consumer
-	me         *webrtc.MediaEngine
-	api        *webrtc.API
+	transports                 map[uint]*WebRTCTransport
+	producers                  map[uint]*Producer
+	consumers                  map[uint]*Consumer
+	producerIdToConsumerIdsMap map[uint][]uint
+	me                         *webrtc.MediaEngine
+	api                        *webrtc.API
+	bufferFactory              *buffer.Factory
+	rtcpCh                     chan []rtcp.Packet
 
 	currentTransportId uint
 }
 
-func NewRouter(id uint, me *webrtc.MediaEngine, api *webrtc.API) *Router {
+func NewRouter(id uint, bff *buffer.Factory, me *webrtc.MediaEngine, api *webrtc.API) *Router {
 	return &Router{
-		Id:                 id,
-		me:                 me,
-		api:                api,
-		transports:         []*WebRTCTransport{},
-		producers:          []*Producer{},
-		consumers:          []*Consumer{},
-		currentTransportId: 0,
+		Id:                         id,
+		me:                         me,
+		api:                        api,
+		rtcpCh:                     make(chan []rtcp.Packet),
+		transports:                 map[uint]*WebRTCTransport{},
+		producers:                  map[uint]*Producer{},
+		consumers:                  map[uint]*Consumer{},
+		producerIdToConsumerIdsMap: map[uint][]uint{},
+		currentTransportId:         0,
+		bufferFactory:              bff,
 	}
 }
 
@@ -39,19 +48,60 @@ func (router *Router) NewWebRTCTransport() (*WebRTCTransport, error) {
 	if err != nil {
 		return nil, err
 	}
-	router.transports = append(router.transports, transport)
+	router.transports[transport.id] = transport
 	return transport, nil
 }
 
 func (router *Router) AddProducer(producer *Producer) error {
+	track := producer.receiver.Track()
+	buff, _ := router.bufferFactory.GetBufferPair(uint32(track.SSRC()))
+	if buff == nil {
+		return fmt.Errorf("router.AddProducer(): buff is nil")
+	}
+	buff.OnFeedback(func(fb []rtcp.Packet) {
+		logger.Info("OnFeedback", fb)
+		router.rtcpCh <- fb
+	})
+
+	if track.Kind() == webrtc.RTPCodecTypeAudio {
+		buff.OnAudioLevel(func(level uint8) {
+			logger.Info("OnAudioLevel", level, "for trackId %s", track.ID())
+			// Disabling adding to audio level observer
+			// FIXME: add to audio level observer
+		})
+
+	} else if track.Kind() == webrtc.RTPCodecTypeVideo {
+		// enable twcc if it's video
+	}
+
+	buff.Bind(producer.receiver.GetParameters(), buffer.Options{
+		// FIXME: hardcoding right now but needs to be in config
+		MaxBitRate: 1500,
+	})
+
+	producer.buffers = buff
 	producer.OnRTP(router.OnRTPPacket())
-	router.producers = append(router.producers, producer)
+	router.producers[producer.Id] = producer
+	router.producerIdToConsumerIdsMap[producer.Id] = []uint{}
+	go producer.readRTP()
+	return nil
+}
+
+func (router *Router) AddConsumer(consumer *Consumer) error {
+	router.consumers[consumer.Id] = consumer
+	consumerIds, ok := router.producerIdToConsumerIdsMap[consumer.producer.Id]
+	if !ok {
+		return fmt.Errorf("associated producer entry not found in producerIdToConsumerIdsMap: %v", consumer.producer.Id)
+	}
+	consumerIds = append(consumerIds, consumer.Id)
+	router.producerIdToConsumerIdsMap[consumer.producer.Id] = consumerIds
 	return nil
 }
 
 func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
-	return func(rtp *buffer.ExtPacket) {
-
+	return func(producerId uint, rtp *buffer.ExtPacket) {
+		logger.Info("packet found now need to forward", producerId, rtp)
+		// here get the associated consumers for the producer id
 	}
 }
 
