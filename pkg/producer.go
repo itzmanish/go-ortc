@@ -6,6 +6,7 @@ import (
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -21,15 +22,18 @@ type Producer struct {
 	receiver   *webrtc.RTPReceiver
 	transport  *WebRTCTransport
 	buffers    *buffer.Buffer
+	rtcpReader *buffer.RTCPReader
 
 	track          *webrtc.TrackRemote
 	trackID        string
 	streamID       string
 	onRTPPacket    OnRTPPacketHandlerFunc
+	onRTCPPacket   OnRTCPPacketHandlerFunc
 	onCloseHandler OnProducerCloseHandlerFunc
 }
 
 type OnRTPPacketHandlerFunc func(producerId uint, rtp *buffer.ExtPacket)
+type OnRTCPPacketHandlerFunc func(producerId uint, rtcp *rtcp.Packet)
 type OnProducerCloseHandlerFunc func()
 
 func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTransport, params RTPParameters, simulcast bool) *Producer {
@@ -105,6 +109,10 @@ func (p *Producer) readRTP() {
 			p.onRTPPacket(p.Id, pkt)
 		}
 	}
+}
+
+func (p *Producer) SendRTCP(pkts []rtcp.Packet) {
+	p.transport.WriteRTCP(pkts)
 }
 
 func (p *Producer) closeTrack() {

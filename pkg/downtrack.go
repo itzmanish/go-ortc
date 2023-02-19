@@ -302,9 +302,9 @@ func (d *DownTrack) writeSimpleRTP(extPkt *buffer.ExtPacket) error {
 		if d.Kind() == webrtc.RTPCodecTypeVideo {
 			if !extPkt.KeyFrame {
 				// FIXME: implement this SendRTCP first on producer
-				// d.producer.SendRTCP([]rtcp.Packet{
-				// 	&rtcp.PictureLossIndication{SenderSSRC: d.ssrc, MediaSSRC: extPkt.Packet.SSRC},
-				// })
+				d.producer.SendRTCP([]rtcp.Packet{
+					&rtcp.PictureLossIndication{SenderSSRC: d.ssrc, MediaSSRC: extPkt.Packet.SSRC},
+				})
 				return nil
 			}
 		}
@@ -407,7 +407,7 @@ func (d *DownTrack) handleRTCP(bytes []byte) {
 
 		if len(fwdPkts) > 0 {
 			// FIXME: not implemented
-			// d.producer.SendRTCP(fwdPkts)
+			d.producer.SendRTCP(fwdPkts)
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -116,6 +117,7 @@ func (t *WebRTCTransport) Produce(kind webrtc.RTPCodecType, parameters RTPParame
 	if err != nil {
 		return nil, errReceiverNotCreated(err)
 	}
+
 	// extParams := GetExtendedParameters(parameters, t.mediaEngine)
 
 	params := GetRTPReceivingParameters(parameters)
@@ -160,6 +162,10 @@ func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, erro
 	}
 	err = t.router.AddConsumer(consumer)
 	return consumer, err
+}
+
+func (t *WebRTCTransport) WriteRTCP(pkts []rtcp.Packet) (int, error) {
+	return t.dtlsConn.WriteRTCP(pkts)
 }
 
 func (t *WebRTCTransport) generateCapabilitites() (TransportCapabilities, error) {

@@ -54,7 +54,7 @@ func (router *Router) NewWebRTCTransport() (*WebRTCTransport, error) {
 
 func (router *Router) AddProducer(producer *Producer) error {
 	track := producer.receiver.Track()
-	buff, _ := router.bufferFactory.GetBufferPair(uint32(track.SSRC()))
+	buff, rtcpReader := router.bufferFactory.GetBufferPair(uint32(track.SSRC()))
 	if buff == nil {
 		return fmt.Errorf("router.AddProducer(): buff is nil")
 	}
@@ -80,6 +80,7 @@ func (router *Router) AddProducer(producer *Producer) error {
 	})
 
 	producer.buffers = buff
+	producer.rtcpReader = rtcpReader
 	producer.OnRTP(router.OnRTPPacket())
 	router.producers[producer.Id] = producer
 	router.producerIdToConsumerIdsMap[producer.Id] = []uint{}
@@ -102,6 +103,29 @@ func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
 	return func(producerId uint, rtp *buffer.ExtPacket) {
 		logger.Info("packet found now need to forward", producerId, rtp)
 		// here get the associated consumers for the producer id
+		consumersId, ok := router.producerIdToConsumerIdsMap[producerId]
+		if !ok {
+			logger.Warn("how come this producer entry is not in the map", producerId)
+			return
+		}
+		for _, cId := range consumersId {
+			consumer, ok := router.consumers[cId]
+			if !ok {
+				logger.Warn("consumer id not in the map", cId)
+				return
+			}
+			err := consumer.Write(rtp)
+			if err != nil {
+				logger.Error("Writing rtp packet err:", err)
+			}
+		}
+	}
+}
+
+func (router *Router) OnRTCPPacket() OnRTCPPacketHandlerFunc {
+	return func(producerId uint, rtcp *rtcp.Packet) {
+		logger.Info("rtcp packet found on producer", producerId, rtcp)
+		// if required forward or do any operation on the packet
 	}
 }
 
