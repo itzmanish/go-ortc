@@ -1,4 +1,4 @@
-package goortc
+package rtc
 
 import "github.com/pion/webrtc/v3"
 

@@ -1,4 +1,4 @@
-package goortc
+package rtc
 
 import "fmt"
 
