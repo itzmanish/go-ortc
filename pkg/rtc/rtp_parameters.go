@@ -3,10 +3,10 @@ package rtc
 import "github.com/pion/webrtc/v3"
 
 type RTPParameters struct {
-	Mid              string
-	Encodings        []webrtc.RTPEncodingParameters
-	HeaderExtensions []webrtc.RTPHeaderExtensionParameter
-	Codecs           []webrtc.RTPCodecParameters
+	Mid              string                               `json:"mid"`
+	Encodings        []webrtc.RTPEncodingParameters       `json:"encodings"`
+	HeaderExtensions []webrtc.RTPHeaderExtensionParameter `json:"headerExtensions"`
+	Codecs           []webrtc.RTPCodecParameters          `json:"codecs"`
 }
 
 type RTCPFeedback struct {
@@ -42,3 +42,10 @@ type RTPCapabilities struct {
 	Codecs           []RTPCodec           `json:"codecs"`
 	HeaderExtensions []RTPHeaderExtension `json:"headerExtensions"`
 }
+
+type MediaKind webrtc.RTPCodecType
+
+const (
+	AudioMediaKind = iota + 1
+	VideoMediaKind
+)

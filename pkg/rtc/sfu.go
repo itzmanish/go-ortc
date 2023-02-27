@@ -8,6 +8,7 @@ import (
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -43,9 +44,12 @@ func NewSFU() (*SFU, error) {
 	if err != nil {
 		return nil, err
 	}
+	ir := &interceptor.Registry{}
+	webrtc.RegisterDefaultInterceptors(&config.me, ir)
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(&config.me),
 		webrtc.WithSettingEngine(config.se),
+		webrtc.WithInterceptorRegistry(ir),
 	)
 	return &SFU{
 		PID:           1,
@@ -66,8 +70,4 @@ func (sfu *SFU) generateNewRouterID() uint16 {
 	}
 	sfu.currentRouterId += 1
 	return sfu.currentRouterId
-}
-
-func (sfu *SFU) blah() {
-
 }

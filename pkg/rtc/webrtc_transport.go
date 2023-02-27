@@ -10,7 +10,13 @@ import (
 )
 
 type WebRTCTransport struct {
-	id uint
+	Id uint
+
+	lastProducerId uint
+	lastConsumerId uint
+	lastMid        uint8
+	closed         bool
+	connected      chan bool
 
 	router           *Router
 	iceGatherer      *webrtc.ICEGatherer
@@ -22,16 +28,14 @@ type WebRTCTransport struct {
 	dtlsConn *webrtc.DTLSTransport
 	sctpConn *webrtc.SCTPTransport
 
-	lastProducerId uint
-	lastConsumerId uint
-	lastMid        uint8
+	Metadata map[string]any
 }
 
 type TransportCapabilities struct {
-	IceCandidates    []webrtc.ICECandidate   `json:"ice_candidates"`
-	IceParameters    webrtc.ICEParameters    `json:"ice_parameters"`
-	DtlsParameters   webrtc.DTLSParameters   `json:"dtls_parameters"`
-	SCTPCapabilities webrtc.SCTPCapabilities `json:"sctp_capabilities"`
+	IceCandidates    []webrtc.ICECandidate   `json:"iceCandidates"`
+	IceParameters    webrtc.ICEParameters    `json:"iceParameters"`
+	DtlsParameters   webrtc.DTLSParameters   `json:"dtlsParameters"`
+	SCTPCapabilities webrtc.SCTPCapabilities `json:"sctpCapabilities"`
 }
 
 func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
@@ -60,12 +64,13 @@ func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
 		logger.Info("dtls state changed", ds)
 	})
 	transport := &WebRTCTransport{
-		id:          id,
+		Id:          id,
 		router:      router,
 		iceGatherer: iceGatherer,
 		iceConn:     ice,
 		dtlsConn:    dtls,
 		sctpConn:    sctp,
+		connected:   make(chan bool, 1),
 	}
 
 	caps, err := transport.generateCapabilitites()
@@ -87,6 +92,7 @@ func (t *WebRTCTransport) IsConnected() bool {
 
 func (t *WebRTCTransport) Connect(dtlsParams webrtc.DTLSParameters, iceParams webrtc.ICEParameters) error {
 	iceRole := webrtc.ICERoleControlled
+
 	err := t.iceConn.Start(nil, iceParams, &iceRole)
 	if err != nil {
 		return err
@@ -98,12 +104,21 @@ func (t *WebRTCTransport) Connect(dtlsParams webrtc.DTLSParameters, iceParams we
 		return err
 	}
 
-	err = t.sctpConn.Start(t.sctpCapabilities)
-	if err != nil {
-		multierror.Append(err, t.iceConn.Stop(), t.dtlsConn.Stop())
-		return err
-	}
+	// err = t.sctpConn.Start(t.sctpCapabilities)
+	// if err != nil {
+	// 	multierror.Append(err, t.iceConn.Stop(), t.dtlsConn.Stop())
+	// 	return err
+	// }
+
 	return nil
+}
+
+func (t *WebRTCTransport) Close() error {
+	if t.closed {
+		return nil
+	}
+	t.closed = true
+	return t.Stop()
 }
 
 func (t *WebRTCTransport) Stop() error {
@@ -143,6 +158,7 @@ func (t *WebRTCTransport) Produce(kind webrtc.RTPCodecType, parameters RTPParame
 }
 
 func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, error) {
+	<-t.connected
 	producer, ok := t.router.producers[producerId]
 	if !ok {
 		return nil, errProducerNotFound(producerId)

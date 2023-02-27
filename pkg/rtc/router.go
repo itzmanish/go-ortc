@@ -24,6 +24,7 @@ type Router struct {
 	api                        *webrtc.API
 	bufferFactory              *buffer.Factory
 	rtcpCh                     chan []rtcp.Packet
+	capabilities               RTPCapabilities
 
 	currentTransportId uint
 }
@@ -40,15 +41,20 @@ func NewRouter(id uint, bff *buffer.Factory, me *webrtc.MediaEngine, api *webrtc
 		producerIdToConsumerIdsMap: map[uint][]uint{},
 		currentTransportId:         0,
 		bufferFactory:              bff,
+		capabilities:               DefaultRouterCapabilities(),
 	}
 }
+func (router *Router) GetRouterCapabilities() RTPCapabilities {
+	return router.capabilities
+}
 
-func (router *Router) NewWebRTCTransport() (*WebRTCTransport, error) {
+func (router *Router) NewWebRTCTransport(metadata map[string]any) (*WebRTCTransport, error) {
 	transport, err := newWebRTCTransport(router.generateNewWebrtcTransportID(), router)
 	if err != nil {
 		return nil, err
 	}
-	router.transports[transport.id] = transport
+	transport.Metadata = metadata
+	router.transports[transport.Id] = transport
 	return transport, nil
 }
 
