@@ -20,20 +20,18 @@ type Router struct {
 	producers                  map[uint]*Producer
 	consumers                  map[uint]*Consumer
 	producerIdToConsumerIdsMap map[uint][]uint
-	me                         *webrtc.MediaEngine
-	api                        *webrtc.API
 	bufferFactory              *buffer.Factory
 	rtcpCh                     chan []rtcp.Packet
 	capabilities               RTPCapabilities
+	config                     RouterConfig
 
 	currentTransportId uint
 }
 
-func NewRouter(id uint, bff *buffer.Factory, me *webrtc.MediaEngine, api *webrtc.API) *Router {
+func NewRouter(id uint, bff *buffer.Factory, config RouterConfig) *Router {
 	return &Router{
 		Id:                         id,
-		me:                         me,
-		api:                        api,
+		config:                     config,
 		rtcpCh:                     make(chan []rtcp.Packet),
 		transports:                 map[uint]*WebRTCTransport{},
 		producers:                  map[uint]*Producer{},
@@ -61,13 +59,10 @@ func (router *Router) NewWebRTCTransport(metadata map[string]any) (*WebRTCTransp
 func (router *Router) AddProducer(producer *Producer) error {
 	track := producer.receiver.Track()
 	buff, rtcpReader := router.bufferFactory.GetBufferPair(uint32(track.SSRC()))
-	if buff == nil {
+	if buff == nil || rtcpReader == nil {
 		return fmt.Errorf("router.AddProducer(): buff is nil")
 	}
-	buff.OnFeedback(func(fb []rtcp.Packet) {
-		logger.Info("OnFeedback", fb)
-		router.rtcpCh <- fb
-	})
+	buff.OnFeedback(producer.SendRTCP)
 
 	if track.Kind() == webrtc.RTPCodecTypeAudio {
 		buff.OnAudioLevel(func(level uint8) {
@@ -78,19 +73,23 @@ func (router *Router) AddProducer(producer *Producer) error {
 
 	} else if track.Kind() == webrtc.RTPCodecTypeVideo {
 		// enable twcc if it's video
+		buff.OnTransportWideCC(producer.twcc.Push)
 	}
 
-	buff.Bind(producer.receiver.GetParameters(), buffer.Options{
+	buff.Bind(webrtc.RTPParameters{
+		HeaderExtensions: producer.parameters.HeaderExtensions,
+		Codecs:           producer.parameters.Codecs,
+	}, buffer.Options{
 		// FIXME: hardcoding right now but needs to be in config
 		MaxBitRate: 1500,
 	})
 
-	producer.buffers = buff
+	producer.buffer = buff
 	producer.rtcpReader = rtcpReader
 	producer.OnRTP(router.OnRTPPacket())
+	producer.OnRTCP(router.OnRTCPPacket())
 	router.producers[producer.Id] = producer
 	router.producerIdToConsumerIdsMap[producer.Id] = []uint{}
-	go producer.readRTP()
 	return nil
 }
 
@@ -107,7 +106,7 @@ func (router *Router) AddConsumer(consumer *Consumer) error {
 
 func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
 	return func(producerId uint, rtp *buffer.ExtPacket) {
-		logger.Info("packet found now need to forward", producerId, rtp)
+		logger.Debug("packet found now need to forward", producerId, rtp)
 		// here get the associated consumers for the producer id
 		consumersId, ok := router.producerIdToConsumerIdsMap[producerId]
 		if !ok {
@@ -129,7 +128,7 @@ func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
 }
 
 func (router *Router) OnRTCPPacket() OnRTCPPacketHandlerFunc {
-	return func(producerId uint, rtcp *rtcp.Packet) {
+	return func(producerId uint, rtcp []rtcp.Packet) {
 		logger.Info("rtcp packet found on producer", producerId, rtcp)
 		// if required forward or do any operation on the packet
 	}

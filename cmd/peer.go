@@ -88,7 +88,7 @@ func (p *Peer) Produce(kind string, parameters rtc.RTPParameters, simulcast bool
 	}
 	var mediaKind rtc.MediaKind
 	if kind == "video" {
-		mediaKind = rtc.AudioMediaKind
+		mediaKind = rtc.VideoMediaKind
 	} else if kind == "audio" {
 		mediaKind = rtc.AudioMediaKind
 	} else {

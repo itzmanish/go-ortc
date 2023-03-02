@@ -26,7 +26,7 @@ type Consumer struct {
 }
 
 func newConsumer(id uint, producer *Producer, track *DownTrack, transport *WebRTCTransport, paused bool) (*Consumer, error) {
-	sender, err := transport.router.api.NewRTPSender(track, transport.dtlsConn)
+	sender, err := transport.api.NewRTPSender(track, transport.dtlsConn)
 	if err != nil {
 		return nil, errFailedToCreateConsumer(err)
 	}

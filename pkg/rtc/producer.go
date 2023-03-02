@@ -6,6 +6,7 @@ import (
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/livekit/mediatransportutil/pkg/twcc"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
@@ -21,8 +22,10 @@ type Producer struct {
 	parameters RTPParameters
 	receiver   *webrtc.RTPReceiver
 	transport  *WebRTCTransport
-	buffers    *buffer.Buffer
+	buffer     *buffer.Buffer
+	rtcpChan   chan []rtcp.Packet
 	rtcpReader *buffer.RTCPReader
+	twcc       *twcc.Responder
 
 	track          *webrtc.TrackRemote
 	trackID        string
@@ -33,11 +36,12 @@ type Producer struct {
 }
 
 type OnRTPPacketHandlerFunc func(producerId uint, rtp *buffer.ExtPacket)
-type OnRTCPPacketHandlerFunc func(producerId uint, rtcp *rtcp.Packet)
+type OnRTCPPacketHandlerFunc func(producerId uint, rtcp []rtcp.Packet)
 type OnProducerCloseHandlerFunc func()
 
 func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTransport, params RTPParameters, simulcast bool) *Producer {
 	track := receiver.Track()
+
 	producer := &Producer{
 		Id:          id,
 		receiver:    receiver,
@@ -47,6 +51,8 @@ func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTranspo
 		trackID:     track.ID(),
 		streamID:    track.StreamID(),
 		isSimulcast: simulcast,
+		twcc:        transport.twcc,
+		rtcpChan:    make(chan []rtcp.Packet),
 	}
 	return producer
 }
@@ -62,6 +68,10 @@ func (p *Producer) SSRC() webrtc.SSRC {
 
 func (p *Producer) OnRTP(h OnRTPPacketHandlerFunc) {
 	p.onRTPPacket = h
+}
+
+func (p *Producer) OnRTCP(h OnRTCPPacketHandlerFunc) {
+	p.onRTCPPacket = h
 }
 
 func (p *Producer) Close() {
@@ -95,24 +105,55 @@ func (p *Producer) readRTP() {
 			p.closeTrack()
 		})
 	}()
+	logger.Debugf("Producer %v: reading RTP packets", p.Id)
 	for {
-		logger.Infof("Producer %v: reading RTP packets", p.Id)
-		pkt, err := p.buffers.ReadExtended()
+		pkt, err := p.buffer.ReadExtended()
 		if err == io.EOF {
 			return
 		} else if err != nil {
 			logger.Errorf("Producer %s: error reading RTP packets: %s", p.Id, err)
 			return
 		}
-		logger.Info("readRTP", "pkt", pkt)
 		if p.onRTPPacket != nil {
 			p.onRTPPacket(p.Id, pkt)
 		}
 	}
 }
 
-func (p *Producer) SendRTCP(pkts []rtcp.Packet) {
-	p.transport.WriteRTCP(pkts)
+func (p *Producer) handleRTCP() {
+	p.rtcpReader.OnPacket(func(bytes []byte) {
+		pkts, err := rtcp.Unmarshal(bytes)
+		if err != nil {
+			logger.Error("could not unmarshal RTCP", err)
+			return
+		}
+
+		for _, pkt := range pkts {
+			switch pkt := pkt.(type) {
+			case *rtcp.SourceDescription:
+			// do nothing for now
+			case *rtcp.SenderReport:
+				p.buffer.SetSenderReportData(pkt.RTPTime, pkt.NTPTime)
+			case *rtcp.TransportLayerCC:
+				logger.Infof("PRODUCER::handleRTCP, got rtcp packet: %+v", pkt)
+			}
+		}
+	})
+}
+
+func (p *Producer) SendRTCP(packets []rtcp.Packet) {
+	if packets == nil || p.closed.get() {
+		return
+	}
+	logger.Debugf("PRODUCER::SendRTCP sending rtcp fb: %+v", packets)
+	_, err := p.WriteRTCP(packets)
+	if err != nil {
+		logger.Error("Producer::SendRTCP Error:", err)
+	}
+}
+
+func (p *Producer) WriteRTCP(pkts []rtcp.Packet) (int, error) {
+	return p.transport.WriteRTCP(pkts)
 }
 
 func (p *Producer) closeTrack() {

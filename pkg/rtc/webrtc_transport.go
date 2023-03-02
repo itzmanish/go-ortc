@@ -5,6 +5,12 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/itzmanish/go-ortc/pkg/logger"
+
+	twccManager "github.com/livekit/mediatransportutil/pkg/twcc"
+	"github.com/pion/interceptor"
+	"github.com/pion/interceptor/pkg/cc"
+	"github.com/pion/interceptor/pkg/gcc"
+	"github.com/pion/interceptor/pkg/twcc"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
@@ -18,12 +24,14 @@ type WebRTCTransport struct {
 	closed         bool
 	connected      chan bool
 
+	twcc             *twccManager.Responder
 	router           *Router
 	iceGatherer      *webrtc.ICEGatherer
 	iceParams        webrtc.ICEParameters
 	sctpCapabilities webrtc.SCTPCapabilities
 	caps             TransportCapabilities
 
+	api      *webrtc.API
 	iceConn  *webrtc.ICETransport
 	dtlsConn *webrtc.DTLSTransport
 	sctpConn *webrtc.SCTPTransport
@@ -39,7 +47,29 @@ type TransportCapabilities struct {
 }
 
 func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
-	api := router.api
+	me := router.config.transportConfig.me
+	se := router.config.transportConfig.se
+	ir := &interceptor.Registry{}
+	gf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
+		return gcc.NewSendSideBWE(
+			gcc.SendSideBWEInitialBitrate(1*1000*1000),
+			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
+		)
+	})
+	if err == nil {
+		gf.OnNewPeerConnection(func(id string, estimator cc.BandwidthEstimator) {
+			// if onBandwidthEstimator != nil {
+			// 	onBandwidthEstimator(estimator)
+			// }
+		})
+		ir.Add(gf)
+
+		tf, err := twcc.NewHeaderExtensionInterceptor()
+		if err == nil {
+			ir.Add(tf)
+		}
+	}
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(&me), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(ir))
 	iceGatherer, err := api.NewICEGatherer(webrtc.ICEGatherOptions{
 		ICEGatherPolicy: webrtc.ICETransportPolicyAll,
 	})
@@ -70,6 +100,7 @@ func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
 		iceConn:     ice,
 		dtlsConn:    dtls,
 		sctpConn:    sctp,
+		api:         api,
 		connected:   make(chan bool, 1),
 	}
 
@@ -128,30 +159,41 @@ func (t *WebRTCTransport) Stop() error {
 }
 
 func (t *WebRTCTransport) Produce(kind webrtc.RTPCodecType, parameters RTPParameters, simulcast bool) (*Producer, error) {
-	receiver, err := t.router.api.NewRTPReceiver(kind, t.dtlsConn)
+	receiver, err := t.api.NewRTPReceiver(kind, t.dtlsConn)
 	if err != nil {
 		return nil, errReceiverNotCreated(err)
 	}
-
-	// extParams := GetExtendedParameters(parameters, t.mediaEngine)
 
 	params := GetRTPReceivingParameters(parameters)
 	err = receiver.Receive(params)
 	if err != nil {
 		return nil, errSettingReceiverParameters(err)
 	}
-
-	receiver.SetRTPParameters(webrtc.RTPParameters{
-		Codecs: []webrtc.RTPCodecParameters{
-			parameters.Codecs[0],
-		},
-	})
+	validParams := webrtc.RTPParameters{
+		Codecs:           parameters.Codecs,
+		HeaderExtensions: parameters.HeaderExtensions,
+	}
+	receiver.SetRTPParameters(validParams)
+	if t.twcc == nil {
+		ssrc := receiver.Track().SSRC()
+		t.twcc = twccManager.NewTransportWideCCResponder(uint32(ssrc))
+		t.twcc.OnFeedback(func(pkt rtcp.RawPacket) {
+			logger.Debugf("TRANSPORT::TWCC::OnFeedback() sending packet: %+v", pkt)
+			_, err := t.WriteRTCP([]rtcp.Packet{&pkt})
+			if err != nil {
+				logger.Error("error on writing TWCC feedback packet", err)
+			}
+		})
+	}
 	producer := newProducer(t.getNextProducerId(), receiver, t, parameters, simulcast)
 
 	err = t.router.AddProducer(producer)
 	if err != nil {
 		return nil, err
 	}
+
+	go producer.readRTP()
+	go producer.handleRTCP()
 
 	return producer, nil
 

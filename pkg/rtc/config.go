@@ -9,9 +9,16 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
-type SFUConfig struct {
+type RouterConfig struct {
+	transportConfig WebRTCConfig
+}
+type WebRTCConfig struct {
 	me webrtc.MediaEngine
 	se webrtc.SettingEngine
+}
+type SFUConfig struct {
+	bufferFactory *buffer.Factory
+	routerConfig  RouterConfig
 }
 
 func NewSFUConfig(bff *buffer.Factory) (*SFUConfig, error) {
@@ -28,14 +35,6 @@ func NewSFUConfig(bff *buffer.Factory) (*SFUConfig, error) {
 		},
 		BufferFactory: bff.GetOrNew,
 	}
-	// udpListener, err := net.ListenUDP("udp", &net.UDPAddr{
-	// 	IP:   net.IP{0, 0, 0, 0},
-	// 	Port: 5000,
-	// })
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// se.SetICEUDPMux(webrtc.NewICEUDPMux(nil, udpListener))
 	err = se.SetEphemeralUDPPortRange(40000, 50000)
 	if err != nil {
 		return nil, err
@@ -43,8 +42,13 @@ func NewSFUConfig(bff *buffer.Factory) (*SFUConfig, error) {
 	se.DisableMediaEngineCopy(true)
 	se.SetLite(true)
 	return &SFUConfig{
-		me: me,
-		se: se,
+		bufferFactory: bff,
+		routerConfig: RouterConfig{
+			transportConfig: WebRTCConfig{
+				me: me,
+				se: se,
+			},
+		},
 	}, nil
 }
 
@@ -76,7 +80,7 @@ func DefaultCodecs(kind MediaKind) []RTPCodec {
 			},
 		}
 	}
-	videoRTCPFeedback := []RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
+	videoRTCPFeedback := []RTCPFeedback{{"goog-remb", ""}, {"transport-cc", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
 	return []RTPCodec{
 		{
 			MimeType:     webrtc.MimeTypeVP8,
@@ -105,4 +109,77 @@ func DefaultRouterCapabilities() RTPCapabilities {
 		Codecs:           codecs,
 		HeaderExtensions: headerExts,
 	}
+}
+
+func GetMediaEngine(publisher bool) (*webrtc.MediaEngine, error) {
+	m := &webrtc.MediaEngine{}
+	if publisher {
+		err := RegisterCodecs(m)
+		if err != nil {
+			return nil, err
+		}
+		err = RegisterHeaderExtension(m)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
+}
+
+func RegisterCodecs(me *webrtc.MediaEngine) error {
+	for _, codec := range []webrtc.RTPCodecParameters{
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeOpus, 48000, 2, "minptime=10;useinbandfec=1", nil},
+			PayloadType:        111,
+		},
+	} {
+		if err := me.RegisterCodec(codec, webrtc.RTPCodecTypeAudio); err != nil {
+			return err
+		}
+	}
+
+	videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
+	for _, codec := range []webrtc.RTPCodecParameters{
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", videoRTCPFeedback},
+			PayloadType:        96,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{"video/rtx", 90000, 0, "apt=96", nil},
+			PayloadType:        97,
+		},
+	} {
+		if err := me.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func RegisterHeaderExtension(me *webrtc.MediaEngine) error {
+
+	audio := []string{
+		sdp.SDESMidURI,
+		sdp.SDESRTPStreamIDURI,
+		sdp.AudioLevelURI,
+	}
+	video := []string{
+		sdp.SDESMidURI,
+		sdp.SDESRTPStreamIDURI,
+		sdp.TransportCCURI,
+		"urn:ietf:params:rtp-hdrext:framemarking",
+	}
+	for _, uri := range audio {
+		err := me.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: uri}, webrtc.RTPCodecTypeAudio)
+		if err != nil {
+			return err
+		}
+	}
+	for _, uri := range video {
+		err := me.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: uri}, webrtc.RTPCodecTypeVideo)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

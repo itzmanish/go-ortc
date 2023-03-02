@@ -8,17 +8,13 @@ import (
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
-	"github.com/pion/interceptor"
-	"github.com/pion/webrtc/v3"
 )
 
 type SFU struct {
 	PID uint
 
-	api           *webrtc.API
-	config        *SFUConfig
-	bufferFactory *buffer.Factory
-	router        []*Router
+	config *SFUConfig
+	router []*Router
 
 	currentRouterId uint16
 }
@@ -44,24 +40,16 @@ func NewSFU() (*SFU, error) {
 	if err != nil {
 		return nil, err
 	}
-	ir := &interceptor.Registry{}
-	webrtc.RegisterDefaultInterceptors(&config.me, ir)
-	api := webrtc.NewAPI(
-		webrtc.WithMediaEngine(&config.me),
-		webrtc.WithSettingEngine(config.se),
-		webrtc.WithInterceptorRegistry(ir),
-	)
+
 	return &SFU{
-		PID:           1,
-		config:        config,
-		router:        []*Router{},
-		api:           api,
-		bufferFactory: bufferFactory,
+		PID:    1,
+		config: config,
+		router: []*Router{},
 	}, nil
 }
 
 func (sfu *SFU) NewRouter() *Router {
-	return NewRouter(uint(sfu.generateNewRouterID()), sfu.bufferFactory, &sfu.config.me, sfu.api)
+	return NewRouter(uint(sfu.generateNewRouterID()), sfu.config.bufferFactory, sfu.config.routerConfig)
 }
 
 func (sfu *SFU) generateNewRouterID() uint16 {

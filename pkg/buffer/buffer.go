@@ -151,7 +151,8 @@ func (b *Buffer) Bind(params webrtc.RTPParameters, o Options) {
 			switch fb.Type {
 			case webrtc.TypeRTCPFBGoogREMB:
 				b.logger.Info("Setting feedback", "type", "webrtc.TypeRTCPFBGoogREMB")
-				b.remb = true
+				// b.remb = true
+				// Let's not handle remb for now
 			case webrtc.TypeRTCPFBTransportCC:
 				b.logger.Info("Setting feedback", "type", webrtc.TypeRTCPFBTransportCC)
 				b.twcc = true
