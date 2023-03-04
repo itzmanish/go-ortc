@@ -31,6 +31,7 @@ type WebRTCTransport struct {
 	sctpCapabilities webrtc.SCTPCapabilities
 	caps             TransportCapabilities
 
+	me       *webrtc.MediaEngine
 	api      *webrtc.API
 	iceConn  *webrtc.ICETransport
 	dtlsConn *webrtc.DTLSTransport
@@ -46,10 +47,11 @@ type TransportCapabilities struct {
 	SCTPCapabilities webrtc.SCTPCapabilities `json:"sctpCapabilities"`
 }
 
-func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
-	me := router.config.transportConfig.me
+func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTransport, error) {
+	me := &webrtc.MediaEngine{}
 	se := router.config.transportConfig.se
 	ir := &interceptor.Registry{}
+
 	gf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
 		return gcc.NewSendSideBWE(
 			gcc.SendSideBWEInitialBitrate(1*1000*1000),
@@ -69,7 +71,7 @@ func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
 			ir.Add(tf)
 		}
 	}
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(&me), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(ir))
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(ir))
 	iceGatherer, err := api.NewICEGatherer(webrtc.ICEGatherOptions{
 		ICEGatherPolicy: webrtc.ICETransportPolicyAll,
 	})
@@ -101,6 +103,7 @@ func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
 		dtlsConn:    dtls,
 		sctpConn:    sctp,
 		api:         api,
+		me:          me,
 		connected:   make(chan bool, 1),
 	}
 
@@ -158,22 +161,28 @@ func (t *WebRTCTransport) Stop() error {
 	return err
 }
 
-func (t *WebRTCTransport) Produce(kind webrtc.RTPCodecType, parameters RTPParameters, simulcast bool) (*Producer, error) {
-	receiver, err := t.api.NewRTPReceiver(kind, t.dtlsConn)
+func (t *WebRTCTransport) Produce(kind MediaKind, parameters RTPReceiveParameters, simulcast bool) (*Producer, error) {
+	err := SetupProducerMediaEngineForKind(t.me, kind)
+	if err != nil {
+		return nil, err
+	}
+	receiver, err := t.api.NewRTPReceiver(webrtc.RTPCodecType(kind), t.dtlsConn)
 	if err != nil {
 		return nil, errReceiverNotCreated(err)
 	}
 
-	params := GetRTPReceivingParameters(parameters)
+	params := ParseRTPReciveParametersFromORTC(parameters)
 	err = receiver.Receive(params)
 	if err != nil {
 		return nil, errSettingReceiverParameters(err)
 	}
-	validParams := webrtc.RTPParameters{
-		Codecs:           parameters.Codecs,
+	validParams := ParseRTPParametersFromORTC(RTPParameters{
 		HeaderExtensions: parameters.HeaderExtensions,
-	}
-	receiver.SetRTPParameters(validParams)
+		Codecs:           parameters.Codecs,
+		Mid:              parameters.Mid,
+		Rtcp:             parameters.Rtcp,
+	})
+	receiver.SetRTPParameters(RemoveRTXCodecsFromRTPParameters(validParams))
 	if t.twcc == nil {
 		ssrc := receiver.Track().SSRC()
 		t.twcc = twccManager.NewTransportWideCCResponder(uint32(ssrc))
@@ -200,10 +209,16 @@ func (t *WebRTCTransport) Produce(kind webrtc.RTPCodecType, parameters RTPParame
 }
 
 func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, error) {
-	<-t.connected
 	producer, ok := t.router.producers[producerId]
 	if !ok {
 		return nil, errProducerNotFound(producerId)
+	}
+	err := SetupConsumerMediaEngineWithProducerParams(t.me,
+		ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)),
+		webrtc.RTPCodecType(producer.kind),
+	)
+	if err != nil {
+		return nil, err
 	}
 	dt, err := NewDownTrack(
 		producer.track.Codec().RTPCodecCapability,
@@ -294,6 +309,8 @@ func (t *WebRTCTransport) getMid() uint8 {
 	if t.lastMid == math.MaxUint8 {
 		panic("are you crazy? How can you create this much of consumers on a transport!")
 	}
-	t.lastMid += 1
+	defer func() {
+		t.lastMid += 1
+	}()
 	return t.lastMid
 }

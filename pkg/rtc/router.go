@@ -23,7 +23,8 @@ type Router struct {
 	bufferFactory              *buffer.Factory
 	rtcpCh                     chan []rtcp.Packet
 	capabilities               RTPCapabilities
-	config                     RouterConfig
+	// selectedCapabilities       map[MediaKind]RTPCapabilities
+	config RouterConfig
 
 	currentTransportId uint
 }
@@ -40,14 +41,15 @@ func NewRouter(id uint, bff *buffer.Factory, config RouterConfig) *Router {
 		currentTransportId:         0,
 		bufferFactory:              bff,
 		capabilities:               DefaultRouterCapabilities(),
+		// selectedCapabilities:       make(map[MediaKind]RTPCapabilities),
 	}
 }
 func (router *Router) GetRouterCapabilities() RTPCapabilities {
 	return router.capabilities
 }
 
-func (router *Router) NewWebRTCTransport(metadata map[string]any) (*WebRTCTransport, error) {
-	transport, err := newWebRTCTransport(router.generateNewWebrtcTransportID(), router)
+func (router *Router) NewWebRTCTransport(publisher bool, metadata map[string]any) (*WebRTCTransport, error) {
+	transport, err := newWebRTCTransport(router.generateNewWebrtcTransportID(), router, publisher)
 	if err != nil {
 		return nil, err
 	}
@@ -76,10 +78,7 @@ func (router *Router) AddProducer(producer *Producer) error {
 		buff.OnTransportWideCC(producer.twcc.Push)
 	}
 
-	buff.Bind(webrtc.RTPParameters{
-		HeaderExtensions: producer.parameters.HeaderExtensions,
-		Codecs:           producer.parameters.Codecs,
-	}, buffer.Options{
+	buff.Bind(ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)), buffer.Options{
 		// FIXME: hardcoding right now but needs to be in config
 		MaxBitRate: 1500,
 	})
@@ -106,7 +105,7 @@ func (router *Router) AddConsumer(consumer *Consumer) error {
 
 func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
 	return func(producerId uint, rtp *buffer.ExtPacket) {
-		logger.Debug("packet found now need to forward", producerId, rtp)
+		// logger.Info("packet found now need to forward", producerId, rtp)
 		// here get the associated consumers for the producer id
 		consumersId, ok := router.producerIdToConsumerIdsMap[producerId]
 		if !ok {

@@ -17,15 +17,15 @@ import (
 
 var router *Router
 
-func newTransportHelper(t assert.TestingT) (*WebRTCTransport, error) {
+func newTransportHelper(t assert.TestingT, publisher bool) (*WebRTCTransport, error) {
 	if router == nil {
 		router = newRouterHelper(t)
 	}
-	return newWebRTCTransport(1, router)
+	return newWebRTCTransport(1, router, publisher)
 }
 
-func transportConnectHelper(t assert.TestingT, useLocalBuffer bool) (*WebRTCTransport, *testORTCStack) {
-	server, err := newTransportHelper(t)
+func transportConnectHelper(t assert.TestingT, useLocalBuffer bool, publisher bool) (*WebRTCTransport, *testORTCStack) {
+	server, err := newTransportHelper(t, publisher)
 	assert.NoError(t, err)
 	assert.NotNil(t, server)
 	client, err := newORTCStack(useLocalBuffer)
@@ -68,6 +68,7 @@ func testProducerHelper(t *testing.T, server *WebRTCTransport, client *testORTCS
 	rtpSender, err := client.api.NewRTPSender(track, client.dtls)
 	assert.NoError(t, err)
 	sendingParams := rtpSender.GetParameters()
+	parsedSendingParams := ParseRTPSendParametersToORTC(sendingParams)
 	fmt.Println("send params:", sendingParams.Encodings)
 	assert.NoError(t, rtpSender.Send(sendingParams))
 	seenPacket, seenPacketCancel := context.WithCancel(context.Background())
@@ -77,12 +78,17 @@ func testProducerHelper(t *testing.T, server *WebRTCTransport, client *testORTCS
 	wg.Add(1)
 	go func(testing *testing.T) {
 		<-time.After(20 * time.Millisecond)
-		producer, err = server.Produce(webrtc.RTPCodecTypeVideo, RTPParameters{
-			Mid:              "0",
-			Encodings:        sendingParams.Encodings,
-			HeaderExtensions: sendingParams.HeaderExtensions,
-			Codecs:           sendingParams.Codecs,
-		}, false)
+		producer, err = server.Produce(VideoMediaKind, ConvertRTPSendParametersToRTPReceiveParameters(RTPSendParameters{
+			RTPParameters: RTPParameters{
+				Mid:              parsedSendingParams.Mid,
+				HeaderExtensions: parsedSendingParams.HeaderExtensions,
+				Rtcp:             parsedSendingParams.Rtcp,
+				Codecs: []RTPCodecParameters{
+					parsedSendingParams.Codecs[0],
+				},
+			},
+			Encodings: parsedSendingParams.Encodings,
+		}), false)
 		errCh <- err
 		if producer == nil {
 			errCh <- fmt.Errorf("Producer is nil")
@@ -112,13 +118,13 @@ func testProducerHelper(t *testing.T, server *WebRTCTransport, client *testORTCS
 }
 
 func TestNewTransport(t *testing.T) {
-	transport, err := newTransportHelper(t)
+	transport, err := newTransportHelper(t, true)
 	assert.Nil(t, err)
 	assert.NotNil(t, transport)
 }
 
 func TestGetTransportCapabilities(t *testing.T) {
-	transport, err := newTransportHelper(t)
+	transport, err := newTransportHelper(t, true)
 	assert.Nil(t, err)
 	caps := transport.GetCapabilities()
 	assert.NotNil(t, caps)
@@ -126,7 +132,7 @@ func TestGetTransportCapabilities(t *testing.T) {
 }
 
 func TestTransportConnect(t *testing.T) {
-	server, client := transportConnectHelper(t, false)
+	server, client := transportConnectHelper(t, false, true)
 	err := server.Stop()
 	assert.NoError(t, err)
 	err = client.close()
@@ -134,19 +140,20 @@ func TestTransportConnect(t *testing.T) {
 }
 
 func TestProduce(t *testing.T) {
-	server, client := transportConnectHelper(t, false)
+	server, client := transportConnectHelper(t, false, true)
 	testProducerHelper(t, server, client)
 }
 
 func TestConsume(t *testing.T) {
-	producingServer, producingClient := transportConnectHelper(t, false)
-	consumingServer, consumingClient := transportConnectHelper(t, true)
+	producingServer, producingClient := transportConnectHelper(t, false, true)
+	consumingServer, consumingClient := transportConnectHelper(t, true, false)
 	track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "pion")
 	assert.NoError(t, err)
 
 	rtpSender, err := producingClient.api.NewRTPSender(track, producingClient.dtls)
 	assert.NoError(t, err)
 	sendingParams := rtpSender.GetParameters()
+	parsedSendingParams := ParseRTPSendParametersToORTC(sendingParams)
 	fmt.Println("send params:", sendingParams.Encodings)
 	assert.NoError(t, rtpSender.Send(sendingParams))
 	seenPacket, seenPacketCancel := context.WithCancel(context.Background())
@@ -155,12 +162,7 @@ func TestConsume(t *testing.T) {
 	var producer *Producer
 	go func(testing *testing.T) {
 		<-time.After(20 * time.Millisecond)
-		producer, err = producingServer.Produce(webrtc.RTPCodecTypeVideo, RTPParameters{
-			Mid:              "0",
-			Encodings:        sendingParams.Encodings,
-			HeaderExtensions: sendingParams.HeaderExtensions,
-			Codecs:           sendingParams.Codecs,
-		}, false)
+		producer, err = producingServer.Produce(VideoMediaKind, ConvertRTPSendParametersToRTPReceiveParameters(parsedSendingParams), false)
 		errCh <- err
 		if producer == nil {
 			errCh <- fmt.Errorf("Producer is nil")
@@ -193,7 +195,7 @@ func TestConsume(t *testing.T) {
 	receiver, err := consumingClient.api.NewRTPReceiver(webrtc.RTPCodecTypeVideo, consumingClient.dtls)
 	assert.NoError(t, err)
 
-	assert.NoError(t, receiver.Receive(GetRTPReceivingParameters(consumeParams)))
+	assert.NoError(t, receiver.Receive(ParseRTPReciveParametersFromORTC(ConvertRTPSendParametersToRTPReceiveParameters(consumeParams))))
 
 	wg.Add(1)
 	go func() {

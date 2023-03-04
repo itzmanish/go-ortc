@@ -11,12 +11,12 @@ import (
 type Consumer struct {
 	Id uint
 
-	paused      atomicBool
+	paused      bool
 	priority    uint
-	kind        webrtc.RTPCodecType
+	kind        MediaKind
 	isSimulcast bool
 
-	parameters RTPParameters
+	parameters RTPSendParameters
 	track      *DownTrack
 	producer   *Producer
 	sender     *webrtc.RTPSender
@@ -36,34 +36,41 @@ func newConsumer(id uint, producer *Producer, track *DownTrack, transport *WebRT
 	if err != nil {
 		return nil, err
 	}
-
+	ortcParams := ParseRTPSendParametersToORTC(parameters)
+	ortcParams.Rtcp.Cname = track.streamID
+	ortcParams.Mid = strconv.Itoa(int(transport.getMid()))
 	consumer := &Consumer{
-		Id:        id,
-		producer:  producer,
-		sender:    sender,
-		paused:    0,
-		transport: transport,
-		track:     track,
-		parameters: RTPParameters{
-			Codecs:           parameters.Codecs,
-			HeaderExtensions: parameters.HeaderExtensions,
-			Encodings:        parameters.Encodings,
-			Mid:              strconv.Itoa(int(transport.getMid())),
-		},
+		Id:          id,
+		producer:    producer,
+		sender:      sender,
+		paused:      paused,
+		transport:   transport,
+		track:       track,
+		kind:        producer.kind,
+		parameters:  ortcParams,
 		onRTPPacket: nil,
-	}
-	if paused {
-		consumer.paused.set(true)
 	}
 	return consumer, nil
 }
 
-func (c *Consumer) GetParameters() RTPParameters {
+func (c *Consumer) Kind() MediaKind {
+	return c.kind
+}
+
+func (c *Consumer) GetParameters() RTPSendParameters {
 	return c.parameters
 }
 
+func (c *Consumer) Resume() {
+	c.paused = false
+}
+
+func (c *Consumer) Pause() {
+	c.paused = true
+}
+
 func (c *Consumer) Write(packet *buffer.ExtPacket) error {
-	if c.paused.get() {
+	if c.paused {
 		return nil
 	}
 	err := c.track.writeSimpleRTP(packet)

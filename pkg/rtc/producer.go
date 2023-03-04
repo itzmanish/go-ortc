@@ -4,6 +4,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
 	"github.com/livekit/mediatransportutil/pkg/twcc"
@@ -19,7 +20,8 @@ type Producer struct {
 	paused      atomicBool
 	isSimulcast bool
 
-	parameters RTPParameters
+	parameters RTPReceiveParameters
+	kind       MediaKind
 	receiver   *webrtc.RTPReceiver
 	transport  *WebRTCTransport
 	buffer     *buffer.Buffer
@@ -39,17 +41,18 @@ type OnRTPPacketHandlerFunc func(producerId uint, rtp *buffer.ExtPacket)
 type OnRTCPPacketHandlerFunc func(producerId uint, rtcp []rtcp.Packet)
 type OnProducerCloseHandlerFunc func()
 
-func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTransport, params RTPParameters, simulcast bool) *Producer {
+func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTransport, params RTPReceiveParameters, simulcast bool) *Producer {
 	track := receiver.Track()
-
 	producer := &Producer{
-		Id:          id,
-		receiver:    receiver,
-		transport:   transport,
-		track:       track,
-		parameters:  params,
-		trackID:     track.ID(),
-		streamID:    track.StreamID(),
+		Id:         id,
+		receiver:   receiver,
+		transport:  transport,
+		track:      track,
+		kind:       MediaKind(track.Kind()),
+		parameters: params,
+		trackID:    uuid.NewString(),
+		// stream id needs to be generated as unique
+		streamID:    params.Rtcp.Cname,
 		isSimulcast: simulcast,
 		twcc:        transport.twcc,
 		rtcpChan:    make(chan []rtcp.Packet),
@@ -105,7 +108,7 @@ func (p *Producer) readRTP() {
 			p.closeTrack()
 		})
 	}()
-	logger.Debugf("Producer %v: reading RTP packets", p.Id)
+	logger.Infof("Producer %v: reading RTP packets", p.Id)
 	for {
 		pkt, err := p.buffer.ReadExtended()
 		if err == io.EOF {
