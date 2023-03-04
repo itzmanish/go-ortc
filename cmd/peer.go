@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/itzmanish/go-ortc/pkg/logger"
 	"github.com/itzmanish/go-ortc/pkg/rtc"
 	"github.com/pion/webrtc/v3"
 )
@@ -57,7 +58,7 @@ func (p *Peer) Close() {
 }
 
 func (p *Peer) CreateTransport(consuming bool) (*rtc.WebRTCTransport, error) {
-	transport, err := p.router.NewWebRTCTransport(map[string]any{"consuming": consuming})
+	transport, err := p.router.NewWebRTCTransport(!consuming, map[string]any{"consuming": consuming})
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +82,7 @@ func (p *Peer) CloseTransport(id uint) error {
 	return transport.Close()
 }
 
-func (p *Peer) Produce(kind string, parameters rtc.RTPParameters, simulcast bool) (*rtc.Producer, error) {
+func (p *Peer) Produce(kind string, parameters rtc.RTPReceiveParameters, simulcast bool) (*rtc.Producer, error) {
 	transport := p.GetProducingTransport()
 	if transport == nil {
 		return nil, fmt.Errorf("producing transport not found")
@@ -94,10 +95,19 @@ func (p *Peer) Produce(kind string, parameters rtc.RTPParameters, simulcast bool
 	} else {
 		return nil, fmt.Errorf("unknown media kind to produce: %v", kind)
 	}
-	producer, err := transport.Produce(webrtc.RTPCodecType(mediaKind), parameters, simulcast)
+	producer, err := transport.Produce(mediaKind, parameters, simulcast)
 	if err != nil {
 		return nil, err
 	}
 	p.producers[producer.Id] = producer
 	return producer, err
+}
+
+func (p *Peer) Consume(producer *rtc.Producer, paused bool) (*rtc.Consumer, error) {
+	logger.Info("Consuming producerID", producer.Id, "paused:", paused)
+	transport := p.GetConsumingTransport()
+	if transport == nil {
+		return nil, fmt.Errorf("consuming transport not found")
+	}
+	return transport.Consume(producer.Id, paused)
 }

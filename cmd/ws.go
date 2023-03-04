@@ -6,11 +6,9 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/itzmanish/go-ortc/pkg/logger"
 	"github.com/itzmanish/go-ortc/pkg/rtc"
-	"golang.org/x/time/rate"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
@@ -27,6 +25,9 @@ const (
 	Produce
 	ProducerToggle
 	CloseProducer
+	Consume
+	ConsumerResume
+	ConsumerPause
 
 	PeerJoinedBroadcast = 15
 
@@ -102,11 +103,10 @@ func (s WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close(websocket.StatusInternalError, "Closing socket connection")
 
-	l := rate.NewLimiter(rate.Every(time.Millisecond*100), 10)
 	room := s.CreateOrGetRoom(uint(rId))
 	peer := room.AddPeer(uint(pId))
 	for {
-		err = s.handle(r.Context(), c, l, room, peer)
+		err = s.handle(r.Context(), c, room, peer)
 		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
 			return
 		}
@@ -117,18 +117,10 @@ func (s WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s WSServer) handle(ctx context.Context, conn *websocket.Conn, l *rate.Limiter, room *Room, peer *Peer) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
-	defer cancel()
-
-	err := l.Wait(ctx)
-	if err != nil {
-		return err
-	}
-
+func (s WSServer) handle(ctx context.Context, conn *websocket.Conn, room *Room, peer *Peer) error {
 	var data WebSocketMessage
 
-	err = wsjson.Read(context.Background(), conn, &data)
+	err := wsjson.Read(context.Background(), conn, &data)
 	if err != nil {
 		return err
 	}

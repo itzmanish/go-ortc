@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"time"
@@ -18,15 +19,21 @@ func main() {
 }
 
 func run() error {
+	// Debug
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 	addr := "127.0.0.1:8888"
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	log.Printf("listening on http://%v", l.Addr())
+	mux := http.NewServeMux()
+	mux.Handle("/ws", NewWSServer())
 
 	s := &http.Server{
-		Handler:      NewWSServer(),
+		Handler:      mux,
 		ReadTimeout:  time.Second * 10,
 		WriteTimeout: time.Second * 10,
 	}

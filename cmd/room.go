@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/itzmanish/go-ortc/pkg/logger"
 	"github.com/itzmanish/go-ortc/pkg/rtc"
@@ -152,9 +153,9 @@ func (r *Room) HandleIncomingMessage(peer *Peer, msg *WebSocketMessage, cb func(
 	case Produce:
 		{
 			var payload struct {
-				Kind       string            `json:"kind"`
-				Parameters rtc.RTPParameters `json:"rtpParameters"`
-				Simulcast  bool              `json:"simulcast"`
+				Kind       string                   `json:"kind"`
+				Parameters rtc.RTPReceiveParameters `json:"rtpParameters"`
+				Simulcast  bool                     `json:"simulcast"`
 			}
 			err := json.Unmarshal([]byte(msg.Payload), &payload)
 			if err != nil {
@@ -167,7 +168,7 @@ func (r *Room) HandleIncomingMessage(peer *Peer, msg *WebSocketMessage, cb func(
 				return
 			}
 			cb(BuildMessage(struct {
-				ProducerID uint `json:"producerId"`
+				ProducerID uint `json:"id"`
 			}{
 				ProducerID: producer.Id,
 			}))
@@ -179,7 +180,79 @@ func (r *Room) HandleIncomingMessage(peer *Peer, msg *WebSocketMessage, cb func(
 		}
 	case ProducerToggle:
 		{
+			var payload struct {
+				ProducerID uint `json:"producerId"`
+				Pause      bool `json:"pause"`
+			}
+			err := json.Unmarshal([]byte(msg.Payload), &payload)
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			producer, ok := peer.producers[payload.ProducerID]
+			if !ok {
+				cb(nil, fmt.Errorf("producer not found: %v", payload.ProducerID))
+				return
+			}
+			producer.Pause(payload.Pause)
+			cb(nil, nil)
+			break
+		}
+	case Consume:
+		{
+			var payload struct {
+				ProducerID uint `json:"producerId"`
+				Paused     bool `json:"paused"`
+			}
+			err := json.Unmarshal([]byte(msg.Payload), &payload)
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			producer, ok := peer.producers[payload.ProducerID]
+			if !ok {
+				cb(nil, fmt.Errorf("producer not found: %v", payload.ProducerID))
+				return
+			}
+			consumer, err := peer.Consume(producer, payload.Paused)
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			peer.consumers[consumer.Id] = consumer
+			resp := struct {
+				ConsumerId    string                `json:"id"`
+				ProducerId    string                `json:"producerId"`
+				Kind          string                `json:"kind"`
+				RtpParameters rtc.RTPSendParameters `json:"rtpParameters"`
+			}{
+				ConsumerId:    strconv.FormatUint(uint64(consumer.Id), 10),
+				ProducerId:    strconv.FormatUint(uint64(payload.ProducerID), 10),
+				RtpParameters: consumer.GetParameters(),
+				Kind:          consumer.Kind().String(),
+			}
 
+			cb(BuildMessage(resp))
+			break
+		}
+	case ConsumerResume:
+		{
+			var payload struct {
+				ConsumerID uint `json:"consumerId"`
+			}
+			err := json.Unmarshal([]byte(msg.Payload), &payload)
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			consumer, ok := peer.consumers[payload.ConsumerID]
+			if !ok {
+				cb(nil, fmt.Errorf("consumer not found: %v", payload.ConsumerID))
+				return
+			}
+			consumer.Resume()
+			cb(nil, nil)
+			break
 		}
 	default:
 	}
