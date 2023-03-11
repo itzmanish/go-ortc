@@ -48,8 +48,8 @@ func (router *Router) GetRouterCapabilities() RTPCapabilities {
 	return router.capabilities
 }
 
-func (router *Router) NewWebRTCTransport(publisher bool, metadata map[string]any) (*WebRTCTransport, error) {
-	transport, err := newWebRTCTransport(router.generateNewWebrtcTransportID(), router, publisher)
+func (router *Router) NewWebRTCTransport(metadata map[string]any) (*WebRTCTransport, error) {
+	transport, err := newWebRTCTransport(router.generateNewWebrtcTransportID(), router)
 	if err != nil {
 		return nil, err
 	}

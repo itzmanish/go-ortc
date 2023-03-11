@@ -17,15 +17,15 @@ import (
 
 var router *Router
 
-func newTransportHelper(t assert.TestingT, publisher bool) (*WebRTCTransport, error) {
+func newTransportHelper(t assert.TestingT) (*WebRTCTransport, error) {
 	if router == nil {
 		router = newRouterHelper(t)
 	}
-	return newWebRTCTransport(1, router, publisher)
+	return newWebRTCTransport(1, router)
 }
 
 func transportConnectHelper(t assert.TestingT, useLocalBuffer bool, publisher bool) (*WebRTCTransport, *testORTCStack) {
-	server, err := newTransportHelper(t, publisher)
+	server, err := newTransportHelper(t)
 	assert.NoError(t, err)
 	assert.NotNil(t, server)
 	client, err := newORTCStack(useLocalBuffer)
@@ -118,13 +118,13 @@ func testProducerHelper(t *testing.T, server *WebRTCTransport, client *testORTCS
 }
 
 func TestNewTransport(t *testing.T) {
-	transport, err := newTransportHelper(t, true)
+	transport, err := newTransportHelper(t)
 	assert.Nil(t, err)
 	assert.NotNil(t, transport)
 }
 
 func TestGetTransportCapabilities(t *testing.T) {
-	transport, err := newTransportHelper(t, true)
+	transport, err := newTransportHelper(t)
 	assert.Nil(t, err)
 	caps := transport.GetCapabilities()
 	assert.NotNil(t, caps)

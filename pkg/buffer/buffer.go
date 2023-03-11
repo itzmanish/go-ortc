@@ -313,6 +313,12 @@ func (b *Buffer) calc(pkt []byte, arrivalTime int64) {
 		return
 	}
 
+	if b.twcc {
+		if ext := p.GetExtension(b.twccExt); len(ext) > 1 {
+			b.feedbackTWCC(binary.BigEndian.Uint16(ext[0:2]), arrivalTime, p.Marker)
+		}
+	}
+
 	b.stats.TotalByte += uint64(len(pkt))
 	b.bitrateHelper += uint64(len(pkt))
 	b.stats.PacketCount++
@@ -372,12 +378,6 @@ func (b *Buffer) calc(pkt []byte, arrivalTime int64) {
 		b.stats.Jitter += (float64(d) - b.stats.Jitter) / 16
 	}
 	b.lastTransit = transit
-
-	if b.twcc {
-		if ext := p.GetExtension(b.twccExt); ext != nil && len(ext) > 1 {
-			b.feedbackTWCC(binary.BigEndian.Uint16(ext[0:2]), arrivalTime, p.Marker)
-		}
-	}
 
 	if b.audioLevel {
 		if e := p.GetExtension(b.audioExt); e != nil && b.onAudioLevel != nil {
@@ -485,6 +485,7 @@ func (b *Buffer) buildReceptionReport() rtcp.ReceptionReport {
 		LastSenderReport:   uint32(atomic.LoadUint64(&b.lastSRNTPTime) >> 16),
 		Delay:              dlsr,
 	}
+	b.logger.Infof("reception report: %+v", rr)
 	return rr
 }
 
@@ -581,13 +582,7 @@ func IsTimestampWrapAround(timestamp1 uint32, timestamp2 uint32) bool {
 // IsLaterTimestamp returns true if timestamp1 is later in time than timestamp2 factoring in timestamp wrap-around
 func IsLaterTimestamp(timestamp1 uint32, timestamp2 uint32) bool {
 	if timestamp1 > timestamp2 {
-		if IsTimestampWrapAround(timestamp2, timestamp1) {
-			return false
-		}
-		return true
+		return !IsTimestampWrapAround(timestamp2, timestamp1)
 	}
-	if IsTimestampWrapAround(timestamp1, timestamp2) {
-		return true
-	}
-	return false
+	return IsTimestampWrapAround(timestamp1, timestamp2)
 }

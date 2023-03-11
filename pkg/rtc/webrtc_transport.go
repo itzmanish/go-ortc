@@ -47,7 +47,7 @@ type TransportCapabilities struct {
 	SCTPCapabilities webrtc.SCTPCapabilities `json:"sctpCapabilities"`
 }
 
-func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTransport, error) {
+func newWebRTCTransport(id uint, router *Router) (*WebRTCTransport, error) {
 	me := &webrtc.MediaEngine{}
 	se := router.config.transportConfig.se
 	ir := &interceptor.Registry{}
