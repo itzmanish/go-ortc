@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
-	"github.com/itzmanish/go-ortc/pkg/logger"
 )
 
 type SFU struct {
@@ -35,7 +34,7 @@ func init() {
 }
 
 func NewSFU() (*SFU, error) {
-	bufferFactory := buffer.NewBufferFactory(500, logger.NewLogger("ORTC Buffer"))
+	bufferFactory := buffer.NewFactoryOfBufferFactory(500).CreateBufferFactory()
 	config, err := NewSFUConfig(bufferFactory)
 	if err != nil {
 		return nil, err

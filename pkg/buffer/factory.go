@@ -4,9 +4,41 @@ import (
 	"io"
 	"sync"
 
-	"github.com/itzmanish/go-ortc/pkg/logger"
-	"github.com/pion/transport/packetio"
+	"github.com/pion/transport/v2/packetio"
+
+	"github.com/livekit/mediatransportutil/pkg/bucket"
 )
+
+type FactoryOfBufferFactory struct {
+	videoPool *sync.Pool
+	audioPool *sync.Pool
+}
+
+func NewFactoryOfBufferFactory(trackingPackets int) *FactoryOfBufferFactory {
+	return &FactoryOfBufferFactory{
+		videoPool: &sync.Pool{
+			New: func() interface{} {
+				b := make([]byte, trackingPackets*bucket.MaxPktSize)
+				return &b
+			},
+		},
+		audioPool: &sync.Pool{
+			New: func() interface{} {
+				b := make([]byte, bucket.MaxPktSize*200)
+				return &b
+			},
+		},
+	}
+}
+
+func (f *FactoryOfBufferFactory) CreateBufferFactory() *Factory {
+	return &Factory{
+		videoPool:   f.videoPool,
+		audioPool:   f.audioPool,
+		rtpBuffers:  make(map[uint32]*Buffer),
+		rtcpReaders: make(map[uint32]*RTCPReader),
+	}
+}
 
 type Factory struct {
 	sync.RWMutex
@@ -14,34 +46,6 @@ type Factory struct {
 	audioPool   *sync.Pool
 	rtpBuffers  map[uint32]*Buffer
 	rtcpReaders map[uint32]*RTCPReader
-	logger      logger.Logger
-}
-
-func NewBufferFactory(trackingPackets int, log logger.Logger) *Factory {
-	// Enable package wide logging for non-method functions.
-	// If logger is empty - use default Logger.
-	// Logger is a public variable in buffer package.
-	if log == nil {
-		log = logger.NewLogger("Buffer Factory")
-	}
-
-	return &Factory{
-		videoPool: &sync.Pool{
-			New: func() interface{} {
-				b := make([]byte, trackingPackets*maxPktSize)
-				return &b
-			},
-		},
-		audioPool: &sync.Pool{
-			New: func() interface{} {
-				b := make([]byte, maxPktSize*25)
-				return &b
-			},
-		},
-		rtpBuffers:  make(map[uint32]*Buffer),
-		rtcpReaders: make(map[uint32]*RTCPReader),
-		logger:      log,
-	}
 }
 
 func (f *Factory) GetOrNew(packetType packetio.BufferPacketType, ssrc uint32) io.ReadWriteCloser {
@@ -64,7 +68,7 @@ func (f *Factory) GetOrNew(packetType packetio.BufferPacketType, ssrc uint32) io
 		if reader, ok := f.rtpBuffers[ssrc]; ok {
 			return reader
 		}
-		buffer := NewBuffer(ssrc, f.videoPool, f.audioPool, f.logger)
+		buffer := NewBuffer(ssrc, f.videoPool, f.audioPool)
 		f.rtpBuffers[ssrc] = buffer
 		buffer.OnClose(func() {
 			f.Lock()

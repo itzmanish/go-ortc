@@ -48,8 +48,8 @@ func (router *Router) GetRouterCapabilities() RTPCapabilities {
 	return router.capabilities
 }
 
-func (router *Router) NewWebRTCTransport(publisher bool, metadata map[string]any) (*WebRTCTransport, error) {
-	transport, err := newWebRTCTransport(router.generateNewWebrtcTransportID(), router, publisher)
+func (router *Router) NewWebRTCTransport(metadata map[string]any) (*WebRTCTransport, error) {
+	transport, err := newWebRTCTransport(router.generateNewWebrtcTransportID(), router, false)
 	if err != nil {
 		return nil, err
 	}
@@ -64,24 +64,14 @@ func (router *Router) AddProducer(producer *Producer) error {
 	if buff == nil || rtcpReader == nil {
 		return fmt.Errorf("router.AddProducer(): buff is nil")
 	}
-	buff.OnFeedback(producer.SendRTCP)
+	buff.OnRtcpFeedback(producer.SendRTCP)
 
-	if track.Kind() == webrtc.RTPCodecTypeAudio {
-		buff.OnAudioLevel(func(level uint8) {
-			logger.Info("OnAudioLevel", level, "for trackId %s", track.ID())
-			// Disabling adding to audio level observer
-			// FIXME: add to audio level observer
-		})
-
-	} else if track.Kind() == webrtc.RTPCodecTypeVideo {
+	if track.Kind() == webrtc.RTPCodecTypeVideo {
 		// enable twcc if it's video
-		buff.OnTransportWideCC(producer.twcc.Push)
+		buff.SetTWCC(producer.twcc)
 	}
 
-	buff.Bind(ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)), buffer.Options{
-		// FIXME: hardcoding right now but needs to be in config
-		MaxBitRate: 1500,
-	})
+	buff.Bind(ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)))
 
 	producer.buffer = buff
 	producer.rtcpReader = rtcpReader

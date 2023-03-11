@@ -52,23 +52,29 @@ func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTranspo
 	se := router.config.transportConfig.se
 	ir := &interceptor.Registry{}
 
-	gf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
-		return gcc.NewSendSideBWE(
-			gcc.SendSideBWEInitialBitrate(1*1000*1000),
-			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
-		)
-	})
-	if err == nil {
-		gf.OnNewPeerConnection(func(id string, estimator cc.BandwidthEstimator) {
-			// if onBandwidthEstimator != nil {
-			// 	onBandwidthEstimator(estimator)
-			// }
+	if true {
+		gf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
+			return gcc.NewSendSideBWE(
+				gcc.SendSideBWEInitialBitrate(2*1000*1000),
+				gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
+			)
 		})
-		ir.Add(gf)
 
-		tf, err := twcc.NewHeaderExtensionInterceptor()
 		if err == nil {
-			ir.Add(tf)
+			gf.OnNewPeerConnection(func(id string, estimator cc.BandwidthEstimator) {
+				// if onBandwidthEstimator != nil {
+				// 	onBandwidthEstimator(estimator)
+				// }
+				estimator.OnTargetBitrateChange(func(bitrate int) {
+					logger.Info("bitrate changed", bitrate)
+				})
+			})
+			ir.Add(gf)
+
+			tf, err := twcc.NewHeaderExtensionInterceptor()
+			if err == nil {
+				ir.Add(tf)
+			}
 		}
 	}
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(ir))

@@ -10,6 +10,7 @@ import (
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/livekit/mediatransportutil/pkg/bucket"
 	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
 	"github.com/stretchr/testify/assert"
@@ -204,10 +205,9 @@ func TestConsume(t *testing.T) {
 		if buff == nil {
 			t.Error("buffer not found")
 		}
-		buff.Bind(receiver.GetParameters(), buffer.Options{
-			MaxBitRate: 1500,
-		})
-		extP, err := buff.ReadExtended()
+		buff.Bind(receiver.GetParameters())
+		pktBuf := make([]byte, bucket.MaxPktSize)
+		extP, err := buff.ReadExtended(pktBuf)
 		logger.Info("extP: ", extP)
 		assert.NoError(t, err)
 

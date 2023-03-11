@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/livekit/mediatransportutil/pkg/bucket"
 	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"
 	"github.com/stretchr/testify/assert"
 )
 
-var tempBuff = buffer.NewBufferFactory(500, logger.NewLogger("tempBuff"))
+var tempBuff = buffer.NewFactoryOfBufferFactory(35).CreateBufferFactory()
 
 func Test_ORTC_Media(t *testing.T) {
 
@@ -49,10 +49,9 @@ func Test_ORTC_Media(t *testing.T) {
 		if buff == nil {
 			t.Error("buffer not found")
 		}
-		buff.Bind(rtpReceiver.GetParameters(), buffer.Options{
-			MaxBitRate: 1500,
-		})
-		extP, err := buff.ReadExtended()
+		buff.Bind(rtpReceiver.GetParameters())
+		pktBuf := make([]byte, bucket.MaxPktSize)
+		extP, err := buff.ReadExtended(pktBuf)
 		// p, _, err := track.ReadRTP()
 		fmt.Println("packet:", extP)
 		fmt.Print("payload", extP.Payload)

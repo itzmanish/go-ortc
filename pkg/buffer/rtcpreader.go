@@ -2,13 +2,14 @@ package buffer
 
 import (
 	"io"
-	"sync/atomic"
+
+	"go.uber.org/atomic"
 )
 
 type RTCPReader struct {
 	ssrc     uint32
-	closed   atomicBool
-	onPacket atomic.Value //func([]byte)
+	closed   atomic.Bool
+	onPacket atomic.Value // func([]byte)
 	onClose  func()
 }
 
@@ -17,11 +18,11 @@ func NewRTCPReader(ssrc uint32) *RTCPReader {
 }
 
 func (r *RTCPReader) Write(p []byte) (n int, err error) {
-	if r.closed.get() {
+	if r.closed.Load() {
 		err = io.EOF
 		return
 	}
-	if f, ok := r.onPacket.Load().(func([]byte)); ok {
+	if f, ok := r.onPacket.Load().(func([]byte)); ok && f != nil {
 		f(p)
 	}
 	return
@@ -32,7 +33,10 @@ func (r *RTCPReader) OnClose(fn func()) {
 }
 
 func (r *RTCPReader) Close() error {
-	r.closed.set(true)
+	if r.closed.Swap(true) {
+		return nil
+	}
+
 	r.onClose()
 	return nil
 }

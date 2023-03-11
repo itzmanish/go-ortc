@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/livekit/mediatransportutil/pkg/bucket"
 	"github.com/livekit/mediatransportutil/pkg/twcc"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
@@ -110,7 +111,8 @@ func (p *Producer) readRTP() {
 	}()
 	logger.Infof("Producer %v: reading RTP packets", p.Id)
 	for {
-		pkt, err := p.buffer.ReadExtended()
+		pktBuf := make([]byte, bucket.MaxPktSize)
+		pkt, err := p.buffer.ReadExtended(pktBuf)
 		if err == io.EOF {
 			return
 		} else if err != nil {
@@ -141,6 +143,7 @@ func (p *Producer) handleRTCP() {
 				logger.Infof("PRODUCER::handleRTCP, got rtcp packet: %+v", pkt)
 			}
 		}
+		// logger.Infof("producer rtcp sender packets: %+v", pkts)
 	})
 }
 

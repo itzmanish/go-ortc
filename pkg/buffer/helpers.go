@@ -3,29 +3,15 @@ package buffer
 import (
 	"encoding/binary"
 	"errors"
-	"sync/atomic"
 
 	"github.com/itzmanish/go-ortc/pkg/logger"
 )
 
 var (
-	errShortPacket = errors.New("packet is not large enough")
-	errNilPacket   = errors.New("invalid nil packet")
+	errShortPacket   = errors.New("packet is not large enough")
+	errNilPacket     = errors.New("invalid nil packet")
+	errInvalidPacket = errors.New("invalid packet")
 )
-
-type atomicBool int32
-
-func (a *atomicBool) set(value bool) {
-	var i int32
-	if value {
-		i = 1
-	}
-	atomic.StoreInt32((*int32)(a), i)
-}
-
-func (a *atomicBool) get() bool {
-	return atomic.LoadInt32((*int32)(a)) != 0
-}
 
 // VP8 is a helper to get temporal data from VP8 packet header
 /*
@@ -46,23 +32,32 @@ func (a *atomicBool) get() bool {
 			+-+-+-+-+-+-+-+-+
 */
 type VP8 struct {
-	TemporalSupported bool
-	// Optional Header
-	PictureID uint16 /* 8 or 16 bits, picture ID */
-	PicIDIdx  int
-	MBit      bool
-	TL0PICIDX uint8 /* 8 bits temporal level zero index */
-	TlzIdx    int
+	FirstByte byte
+
+	PictureIDPresent int
+	PictureID        uint16 /* 8 or 16 bits, picture ID */
+	MBit             bool
+
+	TL0PICIDXPresent int
+	TL0PICIDX        uint8 /* 8 bits temporal level zero index */
 
 	// Optional Header If either of the T or K bits are set to 1,
 	// the TID/Y/KEYIDX extension field MUST be present.
-	TID uint8 /* 2 bits temporal layer idx*/
+	TIDPresent int
+	TID        uint8 /* 2 bits temporal layer idx */
+	Y          uint8
+
+	KEYIDXPresent int
+	KEYIDX        uint8 /* 5 bits of key frame idx */
+
+	HeaderSize int
+
 	// IsKeyFrame is a helper to detect if current packet is a keyframe
 	IsKeyFrame bool
 }
 
 // Unmarshal parses the passed byte slice and stores the result in the VP8 this method is called upon
-func (p *VP8) Unmarshal(payload []byte) error {
+func (v *VP8) Unmarshal(payload []byte) error {
 	if payload == nil {
 		return errNilPacket
 	}
@@ -74,6 +69,7 @@ func (p *VP8) Unmarshal(payload []byte) error {
 	}
 
 	idx := 0
+	v.FirstByte = payload[idx]
 	S := payload[idx]&0x10 > 0
 	// Check for extended bit control
 	if payload[idx]&0x80 > 0 {
@@ -81,17 +77,20 @@ func (p *VP8) Unmarshal(payload []byte) error {
 		if payloadLen < idx+1 {
 			return errShortPacket
 		}
-		// Check if T is present, if not, no temporal layer is available
-		p.TemporalSupported = payload[idx]&0x20 > 0
-		K := payload[idx]&0x10 > 0
+		I := payload[idx]&0x80 > 0
 		L := payload[idx]&0x40 > 0
+		T := payload[idx]&0x20 > 0
+		K := payload[idx]&0x10 > 0
+		if L && !T {
+			return errInvalidPacket
+		}
 		// Check for PictureID
-		if payload[idx]&0x80 > 0 {
+		if I {
 			idx++
 			if payloadLen < idx+1 {
 				return errShortPacket
 			}
-			p.PicIDIdx = idx
+			v.PictureIDPresent = 1
 			pid := payload[idx] & 0x7f
 			// Check if m is 1, then Picture ID is 15 bits
 			if payload[idx]&0x80 > 0 {
@@ -99,10 +98,10 @@ func (p *VP8) Unmarshal(payload []byte) error {
 				if payloadLen < idx+1 {
 					return errShortPacket
 				}
-				p.MBit = true
-				p.PictureID = binary.BigEndian.Uint16([]byte{pid, payload[idx]})
+				v.MBit = true
+				v.PictureID = binary.BigEndian.Uint16([]byte{pid, payload[idx]})
 			} else {
-				p.PictureID = uint16(pid)
+				v.PictureID = uint16(pid)
 			}
 		}
 		// Check if TL0PICIDX is present
@@ -111,19 +110,27 @@ func (p *VP8) Unmarshal(payload []byte) error {
 			if payloadLen < idx+1 {
 				return errShortPacket
 			}
-			p.TlzIdx = idx
+			v.TL0PICIDXPresent = 1
 
-			if int(idx) >= payloadLen {
+			if idx >= payloadLen {
 				return errShortPacket
 			}
-			p.TL0PICIDX = payload[idx]
+			v.TL0PICIDX = payload[idx]
 		}
-		if p.TemporalSupported || K {
+		if T || K {
 			idx++
 			if payloadLen < idx+1 {
 				return errShortPacket
 			}
-			p.TID = (payload[idx] & 0xc0) >> 6
+			if T {
+				v.TIDPresent = 1
+				v.TID = (payload[idx] & 0xc0) >> 6
+				v.Y = (payload[idx] & 0x20) >> 5
+			}
+			if K {
+				v.KEYIDXPresent = 1
+				v.KEYIDX = payload[idx] & 0x1f
+			}
 		}
 		if idx >= payloadLen {
 			return errShortPacket
@@ -133,22 +140,79 @@ func (p *VP8) Unmarshal(payload []byte) error {
 			return errShortPacket
 		}
 		// Check is packet is a keyframe by looking at P bit in vp8 payload
-		p.IsKeyFrame = payload[idx]&0x01 == 0 && S
+		v.IsKeyFrame = payload[idx]&0x01 == 0 && S
 	} else {
 		idx++
 		if payloadLen < idx+1 {
 			return errShortPacket
 		}
 		// Check is packet is a keyframe by looking at P bit in vp8 payload
-		p.IsKeyFrame = payload[idx]&0x01 == 0 && S
+		v.IsKeyFrame = payload[idx]&0x01 == 0 && S
 	}
+	v.HeaderSize = idx
 	return nil
 }
 
-// isH264Keyframe detects if h264 payload is a keyframe
+func (v *VP8) MarshalTo(buf []byte) error {
+	if len(buf) < v.HeaderSize {
+		return errShortPacket
+	}
+
+	idx := 0
+	buf[idx] = v.FirstByte
+	if (v.PictureIDPresent + v.TL0PICIDXPresent + v.TIDPresent + v.KEYIDXPresent) != 0 {
+		buf[idx] |= 0x80 // X bit
+		idx++
+		buf[idx] = byte(v.PictureIDPresent<<7) | byte(v.TL0PICIDXPresent<<6) | byte(v.TIDPresent<<5) | byte(v.KEYIDXPresent<<4)
+		idx++
+		if v.PictureIDPresent == 1 {
+			if v.MBit {
+				buf[idx] = 0x80 | byte((v.PictureID>>8)&0x7f)
+				buf[idx+1] = byte(v.PictureID & 0xff)
+				idx += 2
+			} else {
+				buf[idx] = byte(v.PictureID)
+				idx++
+			}
+		}
+		if v.TL0PICIDXPresent == 1 {
+			buf[idx] = v.TL0PICIDX
+			idx++
+		}
+		if v.TIDPresent == 1 || v.KEYIDXPresent == 1 {
+			buf[idx] = 0
+			if v.TIDPresent == 1 {
+				buf[idx] = v.TID<<6 | v.Y<<5
+			}
+			if v.KEYIDXPresent == 1 {
+				buf[idx] |= v.KEYIDX & 0x1f
+			}
+			idx++
+		}
+	} else {
+		buf[idx] &^= 0x80 // X bit
+		idx++
+	}
+
+	return nil
+}
+
+func VP8PictureIdSizeDiff(mBit1 bool, mBit2 bool) int {
+	if mBit1 == mBit2 {
+		return 0
+	}
+
+	if mBit1 {
+		return 1
+	}
+
+	return -1
+}
+
+// IsH264Keyframe detects if h264 payload is a keyframe
 // this code was taken from https://github.com/jech/galene/blob/codecs/rtpconn/rtpreader.go#L45
 // all credits belongs to Juliusz Chroboczek @jech and the awesome Galene SFU
-func isH264Keyframe(payload []byte) bool {
+func IsH264Keyframe(payload []byte) bool {
 	if len(payload) < 1 {
 		return false
 	}
@@ -158,7 +222,7 @@ func isH264Keyframe(payload []byte) bool {
 		return false
 	} else if nalu <= 23 {
 		// simple NALU
-		return nalu == 5
+		return nalu == 7
 	} else if nalu == 24 || nalu == 25 || nalu == 26 || nalu == 27 {
 		// STAP-A, STAP-B, MTAP16 or MTAP24
 		i := 1
@@ -190,7 +254,7 @@ func isH264Keyframe(payload []byte) bool {
 				return true
 			} else if n >= 24 {
 				// is this legal?
-				logger.NewLogger("buffer_helper").Info("Non-simple NALU within a STAP")
+				logger.Debug("Non-simple NALU within a STAP")
 			}
 			i += int(length)
 		}
@@ -211,3 +275,80 @@ func isH264Keyframe(payload []byte) bool {
 	}
 	return false
 }
+
+// IsAV1Keyframe detects if av1 payload is a keyframe
+// taken from https://github.com/jech/galene/blob/master/codecs/codecs.go
+// all credits belongs to Juliusz Chroboczek @jech and the awesome Galene SFU
+func IsAV1Keyframe(payload []byte) bool {
+	if len(payload) < 2 {
+		return false
+	}
+	// Z=0, N=1
+	if (payload[0] & 0x88) != 0x08 {
+		return false
+	}
+	w := (payload[0] & 0x30) >> 4
+
+	getObu := func(data []byte, last bool) ([]byte, int, bool) {
+		if last {
+			return data, len(data), false
+		}
+		offset := 0
+		length := 0
+		for {
+			if len(data) <= offset {
+				return nil, offset, offset > 0
+			}
+			l := data[offset]
+			length |= int(l&0x7f) << (offset * 7)
+			offset++
+			if (l & 0x80) == 0 {
+				break
+			}
+		}
+		if len(data) < offset+length {
+			return data[offset:], len(data), true
+		}
+		return data[offset : offset+length],
+			offset + length, false
+	}
+	offset := 1
+	i := 0
+	for {
+		obu, length, truncated :=
+			getObu(payload[offset:], int(w) == i+1)
+		if len(obu) < 1 {
+			return false
+		}
+		tpe := (obu[0] & 0x38) >> 3
+		switch i {
+		case 0:
+			// OBU_SEQUENCE_HEADER
+			if tpe != 1 {
+				return false
+			}
+		default:
+			// OBU_FRAME_HEADER or OBU_FRAME
+			if tpe == 3 || tpe == 6 {
+				if len(obu) < 2 {
+					return false
+				}
+				// show_existing_frame == 0
+				if (obu[1] & 0x80) != 0 {
+					return false
+				}
+				// frame_type == KEY_FRAME
+				return (obu[1] & 0x60) == 0
+			}
+		}
+		if truncated || i >= int(w) {
+			// the first frame header is in a second
+			// packet, give up.
+			return false
+		}
+		offset += length
+		i++
+	}
+}
+
+// -------------------------------------

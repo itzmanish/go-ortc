@@ -54,7 +54,7 @@ func GetCodecsForKind(kind MediaKind) []webrtc.RTPCodecParameters {
 			},
 		}
 	case VideoMediaKind:
-		videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
+		videoRTCPFeedback := []webrtc.RTCPFeedback{{"transport-cc", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
 		return []webrtc.RTPCodecParameters{
 			{
 				RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", videoRTCPFeedback},

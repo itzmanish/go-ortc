@@ -9,7 +9,7 @@ import (
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
 	"github.com/pion/rtcp"
-	"github.com/pion/transport/packetio"
+	"github.com/pion/transport/v2/packetio"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -27,13 +27,14 @@ const (
 type DownTrack struct {
 	id string
 
-	bound       atomicBool
-	mime        string
-	ssrc        uint32
-	streamID    string
-	maxTrack    int
-	payloadType uint8
-	// sequencer     *sequencer
+	bound         atomicBool
+	mime          string
+	ssrc          uint32
+	streamID      string
+	maxTrack      int
+	payloadType   uint8
+	sequencer     *sequencer
+	started       bool
 	trackType     DownTrackType
 	bufferFactory *buffer.Factory
 	payload       *[]byte
@@ -299,9 +300,9 @@ func (d *DownTrack) UpdateStats(packetLen uint32) {
 
 func (d *DownTrack) writeSimpleRTP(extPkt *buffer.ExtPacket) error {
 	if d.reSync.get() {
+		logger.Infof("sending pli now if the packet is keyframe: %+v", extPkt)
 		if d.Kind() == webrtc.RTPCodecTypeVideo {
 			if !extPkt.KeyFrame {
-				// FIXME: implement this SendRTCP first on producer
 				d.producer.SendRTCP([]rtcp.Packet{
 					&rtcp.PictureLossIndication{SenderSSRC: d.ssrc, MediaSSRC: extPkt.Packet.SSRC},
 				})
@@ -322,10 +323,10 @@ func (d *DownTrack) writeSimpleRTP(extPkt *buffer.ExtPacket) error {
 	newSN := extPkt.Packet.SequenceNumber - d.snOffset
 	newTS := extPkt.Packet.Timestamp - d.tsOffset
 	// FIXME:  no sequencer now
-	// if d.sequencer != nil {
-	// 	d.sequencer.push(extPkt.Packet.SequenceNumber, newSN, newTS, 0, extPkt.Head)
-	// }
-	if extPkt.Head {
+	if d.sequencer != nil {
+		d.sequencer.push(extPkt.Packet.SequenceNumber, newSN, newTS, 0)
+	}
+	if !d.started {
 		d.lastSN = newSN
 		d.lastTS = newTS
 	}
