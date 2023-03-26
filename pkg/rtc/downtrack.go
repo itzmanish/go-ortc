@@ -218,13 +218,7 @@ func (d *DownTrack) CreateSourceDescriptionChunks() []rtcp.SourceDescriptionChun
 			Source: d.ssrc,
 			Items: []rtcp.SourceDescriptionItem{{
 				Type: rtcp.SDESCNAME,
-				Text: d.streamID,
-			}},
-		}, {
-			Source: d.ssrc,
-			Items: []rtcp.SourceDescriptionItem{{
-				Type: rtcp.SDESType(15),
-				Text: d.producer.parameters.Mid,
+				Text: d.StreamID(),
 			}},
 		},
 	}
