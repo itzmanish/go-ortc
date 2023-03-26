@@ -1,8 +1,10 @@
 package rtc
 
 import (
+	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/itzmanish/go-ortc/pkg/buffer"
@@ -14,11 +16,12 @@ import (
 )
 
 type Producer struct {
+	logger.Logger
 	Id uint
 
-	closed      atomicBool
 	closeOnce   sync.Once
-	paused      atomicBool
+	closed      atomic.Bool
+	paused      atomic.Bool
 	isSimulcast bool
 
 	parameters RTPReceiveParameters
@@ -27,7 +30,6 @@ type Producer struct {
 	transport  *WebRTCTransport
 	buffer     *buffer.Buffer
 	rtcpChan   chan []rtcp.Packet
-	rtcpReader *buffer.RTCPReader
 	twcc       *twcc.Responder
 
 	track          *webrtc.TrackRemote
@@ -57,6 +59,7 @@ func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTranspo
 		isSimulcast: simulcast,
 		twcc:        transport.twcc,
 		rtcpChan:    make(chan []rtcp.Packet),
+		Logger:      logger.NewLogger(fmt.Sprintf("Producer [id: %v]", id)).WithField("Kind", track.Kind().String()),
 	}
 	return producer
 }
@@ -79,12 +82,12 @@ func (p *Producer) OnRTCP(h OnRTCPPacketHandlerFunc) {
 }
 
 func (p *Producer) Close() {
-	if p.closed.get() {
+	if p.closed.Load() {
 		return
 	}
 
 	p.closeOnce.Do(func() {
-		p.closed.set(true)
+		p.closed.Store(true)
 		p.closeTrack()
 	})
 	if p.onCloseHandler != nil {
@@ -93,19 +96,39 @@ func (p *Producer) Close() {
 }
 
 func (p *Producer) Pause(value bool) {
-	if p.closed.get() {
+	if p.closed.Load() {
 		return
 	}
 
-	p.paused.set(value)
+	p.paused.Store(value)
+}
+
+func (p *Producer) SendRTCP(packets []rtcp.Packet) {
+	if packets == nil || p.closed.Load() {
+		return
+	}
+	logger.Debugf("PRODUCER::SendRTCP sending rtcp fb: %+v", packets)
+	_, err := p.WriteRTCP(packets)
+	if err != nil {
+		logger.Error("Producer::SendRTCP Error:", err)
+	}
+}
+
+func (p *Producer) WriteRTCP(pkts []rtcp.Packet) (int, error) {
+	return p.transport.WriteRTCP(pkts)
+}
+
+func (p *Producer) GetRTCPSenderReportDataExt() *buffer.RTCPSenderReportDataExt {
+	return p.buffer.GetSenderReportDataExt()
+}
+func (p *Producer) closeTrack() {
+
 }
 
 func (p *Producer) readRTP() {
-	// Read RTP packets from the receiver's track and send them to the router
-	// FIXME: should need to implement a way to stop the goroutine
 	defer func() {
 		p.closeOnce.Do(func() {
-			p.closed.set(true)
+			p.closed.Store(true)
 			p.closeTrack()
 		})
 	}()
@@ -125,43 +148,22 @@ func (p *Producer) readRTP() {
 	}
 }
 
-func (p *Producer) handleRTCP() {
-	p.rtcpReader.OnPacket(func(bytes []byte) {
-		pkts, err := rtcp.Unmarshal(bytes)
-		if err != nil {
-			logger.Error("could not unmarshal RTCP", err)
-			return
-		}
-
-		for _, pkt := range pkts {
-			switch pkt := pkt.(type) {
-			case *rtcp.SourceDescription:
-			// do nothing for now
-			case *rtcp.SenderReport:
-				p.buffer.SetSenderReportData(pkt.RTPTime, pkt.NTPTime)
-			case *rtcp.TransportLayerCC:
-				logger.Infof("PRODUCER::handleRTCP, got rtcp packet: %+v", pkt)
-			}
-		}
-		// logger.Infof("producer rtcp sender packets: %+v", pkts)
-	})
-}
-
-func (p *Producer) SendRTCP(packets []rtcp.Packet) {
-	if packets == nil || p.closed.get() {
+func (p *Producer) handleRTCP(bytes []byte) {
+	pkts, err := rtcp.Unmarshal(bytes)
+	if err != nil {
+		logger.Error("could not unmarshal RTCP", err)
 		return
 	}
-	logger.Debugf("PRODUCER::SendRTCP sending rtcp fb: %+v", packets)
-	_, err := p.WriteRTCP(packets)
-	if err != nil {
-		logger.Error("Producer::SendRTCP Error:", err)
+
+	for _, pkt := range pkts {
+		switch pkt := pkt.(type) {
+		case *rtcp.SourceDescription:
+			// do nothing for now
+		case *rtcp.SenderReport:
+			p.buffer.SetSenderReportData(pkt.RTPTime, pkt.NTPTime)
+		default:
+			logger.Infof("PRODUCER::handleRTCP, got rtcp packet: %+v", pkt)
+		}
 	}
-}
-
-func (p *Producer) WriteRTCP(pkts []rtcp.Packet) (int, error) {
-	return p.transport.WriteRTCP(pkts)
-}
-
-func (p *Producer) closeTrack() {
 
 }

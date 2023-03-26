@@ -58,7 +58,7 @@ func (p *Peer) Close() {
 }
 
 func (p *Peer) CreateTransport(consuming bool) (*rtc.WebRTCTransport, error) {
-	transport, err := p.router.NewWebRTCTransport(!consuming, map[string]any{"consuming": consuming})
+	transport, err := p.router.NewWebRTCTransport(map[string]any{"consuming": consuming})
 	if err != nil {
 		return nil, err
 	}

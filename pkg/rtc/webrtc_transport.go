@@ -2,15 +2,14 @@ package rtc
 
 import (
 	"math"
+	"sync"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/itzmanish/go-ortc/pkg/logger"
 
 	twccManager "github.com/livekit/mediatransportutil/pkg/twcc"
-	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/cc"
 	"github.com/pion/interceptor/pkg/gcc"
-	"github.com/pion/interceptor/pkg/twcc"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
@@ -22,9 +21,14 @@ type WebRTCTransport struct {
 	lastConsumerId uint
 	lastMid        uint8
 	closed         bool
+	closeOnce      sync.Once
 	connected      chan bool
 
+	producers map[uint]*Producer
+	consumers map[uint]*Consumer
+
 	twcc             *twccManager.Responder
+	bwe              cc.BandwidthEstimator
 	router           *Router
 	iceGatherer      *webrtc.ICEGatherer
 	iceParams        webrtc.ICEParameters
@@ -50,34 +54,8 @@ type TransportCapabilities struct {
 func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTransport, error) {
 	me := &webrtc.MediaEngine{}
 	se := router.config.transportConfig.se
-	ir := &interceptor.Registry{}
 
-	if true {
-		gf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
-			return gcc.NewSendSideBWE(
-				gcc.SendSideBWEInitialBitrate(2*1000*1000),
-				gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
-			)
-		})
-
-		if err == nil {
-			gf.OnNewPeerConnection(func(id string, estimator cc.BandwidthEstimator) {
-				// if onBandwidthEstimator != nil {
-				// 	onBandwidthEstimator(estimator)
-				// }
-				estimator.OnTargetBitrateChange(func(bitrate int) {
-					logger.Info("bitrate changed", bitrate)
-				})
-			})
-			ir.Add(gf)
-
-			tf, err := twcc.NewHeaderExtensionInterceptor()
-			if err == nil {
-				ir.Add(tf)
-			}
-		}
-	}
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se), webrtc.WithInterceptorRegistry(ir))
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se))
 	iceGatherer, err := api.NewICEGatherer(webrtc.ICEGatherOptions{
 		ICEGatherPolicy: webrtc.ICETransportPolicyAll,
 	})
@@ -92,15 +70,6 @@ func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTranspo
 
 	sctp := api.NewSCTPTransport(dtls)
 
-	ice.OnConnectionStateChange(func(is webrtc.ICETransportState) {
-		logger.Info("ice state changed", is)
-	})
-	ice.OnSelectedCandidatePairChange(func(ip *webrtc.ICECandidatePair) {
-		logger.Info("ice selected candidate pair changed", ip)
-	})
-	dtls.OnStateChange(func(ds webrtc.DTLSTransportState) {
-		logger.Info("dtls state changed", ds)
-	})
 	transport := &WebRTCTransport{
 		Id:          id,
 		router:      router,
@@ -110,7 +79,10 @@ func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTranspo
 		sctpConn:    sctp,
 		api:         api,
 		me:          me,
+		closeOnce:   sync.Once{},
 		connected:   make(chan bool, 1),
+		producers:   make(map[uint]*Producer),
+		consumers:   make(map[uint]*Consumer),
 	}
 
 	caps, err := transport.generateCapabilitites()
@@ -118,6 +90,8 @@ func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTranspo
 		return nil, err
 	}
 	transport.caps = caps
+
+	transport.addListeners()
 
 	return transport, nil
 }
@@ -158,6 +132,14 @@ func (t *WebRTCTransport) Close() error {
 		return nil
 	}
 	t.closed = true
+	for _, producer := range t.producers {
+		producer.Close()
+	}
+	for _, consumer := range t.consumers {
+		consumer.Close()
+	}
+	t.producers = nil
+	t.consumers = nil
 	return t.Stop()
 }
 
@@ -208,7 +190,8 @@ func (t *WebRTCTransport) Produce(kind MediaKind, parameters RTPReceiveParameter
 	}
 
 	go producer.readRTP()
-	go producer.handleRTCP()
+
+	t.producers[producer.Id] = producer
 
 	return producer, nil
 
@@ -222,11 +205,26 @@ func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, erro
 	err := SetupConsumerMediaEngineWithProducerParams(t.me,
 		ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)),
 		webrtc.RTPCodecType(producer.kind),
+		producer.isSimulcast,
 	)
 	if err != nil {
 		return nil, err
 	}
+	if t.bwe == nil {
+		bwe, err := gcc.NewSendSideBWE(
+			gcc.SendSideBWEInitialBitrate(2*1000*1000),
+			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
+		)
+		if err != nil {
+			return nil, err
+		}
+		bwe.OnTargetBitrateChange(func(bitrate int) {
+			logger.Info("bitrate changed", bitrate)
+		})
+		t.bwe = bwe
+	}
 	dt, err := NewDownTrack(
+		t.getMid(),
 		producer.track.Codec().RTPCodecCapability,
 		producer, t.router.bufferFactory,
 		500,
@@ -234,12 +232,22 @@ func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, erro
 	if err != nil {
 		return nil, errFailedToCreateDownTrack(err)
 	}
-
+	dt.OnTransportCCFeedback(func(tlc *rtcp.TransportLayerCC) {
+		logger.Info("sending transport cc to evaluate", tlc)
+		err := t.bwe.WriteRTCP([]rtcp.Packet{tlc}, nil)
+		if err != nil {
+			logger.Error("Error on processing incoming tcc packet", err)
+		}
+	})
 	consumer, err := newConsumer(t.getNextConsumerId(), producer, dt, t, paused)
 	if err != nil {
 		return nil, err
 	}
 	err = t.router.AddConsumer(consumer)
+	t.consumers[consumer.Id] = consumer
+	dt.OnCloseHandler(func() {
+		consumer.Close()
+	})
 	return consumer, err
 }
 
@@ -293,6 +301,23 @@ func (t *WebRTCTransport) generateCapabilitites() (TransportCapabilities, error)
 		DtlsParameters:   dtlsParams,
 		SCTPCapabilities: sctpCapabilities,
 	}, nil
+}
+
+func (t *WebRTCTransport) addListeners() {
+	t.iceConn.OnConnectionStateChange(func(is webrtc.ICETransportState) {
+		logger.Info("ice state changed", is)
+		if is == webrtc.ICETransportStateDisconnected || is == webrtc.ICETransportStateFailed {
+			t.closeOnce.Do(func() {
+				t.Close()
+			})
+		}
+	})
+	t.iceConn.OnSelectedCandidatePairChange(func(ip *webrtc.ICECandidatePair) {
+		logger.Info("ice selected candidate pair changed", ip)
+	})
+	t.dtlsConn.OnStateChange(func(ds webrtc.DTLSTransportState) {
+		logger.Info("dtls state changed", ds)
+	})
 }
 
 func (t *WebRTCTransport) getNextProducerId() uint {

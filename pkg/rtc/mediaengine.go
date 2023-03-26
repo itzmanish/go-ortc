@@ -7,7 +7,10 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
-func SetupConsumerMediaEngineWithProducerParams(me *webrtc.MediaEngine, params webrtc.RTPParameters, kind webrtc.RTPCodecType) error {
+const VideoOrientationURI = "urn:3gpp:video-orientation"
+const VideoOrientationExtensionID = 8
+
+func SetupConsumerMediaEngineWithProducerParams(me *webrtc.MediaEngine, params webrtc.RTPParameters, kind webrtc.RTPCodecType, simulcast bool) error {
 	for _, codec := range params.Codecs {
 		err := me.RegisterCodec(codec, kind)
 		if err != nil {
@@ -15,6 +18,9 @@ func SetupConsumerMediaEngineWithProducerParams(me *webrtc.MediaEngine, params w
 		}
 	}
 	for _, hExt := range params.HeaderExtensions {
+		if !simulcast && hExt.URI == sdp.SDESRTPStreamIDURI {
+			continue
+		}
 		err := me.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
 			URI: hExt.URI,
 		}, kind)
@@ -49,19 +55,19 @@ func GetCodecsForKind(kind MediaKind) []webrtc.RTPCodecParameters {
 	case AudioMediaKind:
 		return []webrtc.RTPCodecParameters{
 			{
-				RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeOpus, 48000, 2, "minptime=10;useinbandfec=1", nil},
+				RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=20;useinbandfec=1", RTCPFeedback: nil},
 				PayloadType:        111,
 			},
 		}
 	case VideoMediaKind:
-		videoRTCPFeedback := []webrtc.RTCPFeedback{{"transport-cc", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
+		videoRTCPFeedback := []webrtc.RTCPFeedback{{Type: "transport-cc", Parameter: ""}, {Type: "ccm", Parameter: "fir"}, {Type: "nack", Parameter: ""}, {Type: "nack", Parameter: "pli"}}
 		return []webrtc.RTPCodecParameters{
 			{
-				RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", videoRTCPFeedback},
+				RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000, Channels: 0, SDPFmtpLine: "", RTCPFeedback: videoRTCPFeedback},
 				PayloadType:        96,
 			},
 			{
-				RTPCodecCapability: webrtc.RTPCodecCapability{"video/rtx", 90000, 0, "apt=96", nil},
+				RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: "video/rtx", ClockRate: 90000, Channels: 0, SDPFmtpLine: "apt=96", RTCPFeedback: nil},
 				PayloadType:        97,
 			},
 		}
@@ -71,35 +77,43 @@ func GetCodecsForKind(kind MediaKind) []webrtc.RTPCodecParameters {
 
 func GetHeaderExtensionForKind(kind MediaKind) []webrtc.RTPHeaderExtensionParameter {
 	audio := []webrtc.RTPHeaderExtensionParameter{
-		webrtc.RTPHeaderExtensionParameter{
+		{
 			URI: sdp.SDESMidURI,
 			ID:  1,
 		},
-		webrtc.RTPHeaderExtensionParameter{
-			URI: sdp.SDESRTPStreamIDURI,
-			ID:  2,
+		{
+			URI: sdp.ABSSendTimeURI,
+			ID:  3,
 		},
-		webrtc.RTPHeaderExtensionParameter{
+		{
 			URI: sdp.AudioLevelURI,
 			ID:  10,
 		},
 	}
 	video := []webrtc.RTPHeaderExtensionParameter{
-		webrtc.RTPHeaderExtensionParameter{
+		{
 			URI: sdp.SDESMidURI,
 			ID:  1,
 		},
-		webrtc.RTPHeaderExtensionParameter{
+		{
 			URI: sdp.SDESRTPStreamIDURI,
 			ID:  2,
 		},
-		webrtc.RTPHeaderExtensionParameter{
+		{
+			URI: sdp.ABSSendTimeURI,
+			ID:  3,
+		},
+		{
 			URI: sdp.TransportCCURI,
 			ID:  5,
 		},
-		webrtc.RTPHeaderExtensionParameter{
+		{
 			URI: "urn:ietf:params:rtp-hdrext:framemarking",
 			ID:  7,
+		},
+		{
+			URI: VideoOrientationURI,
+			ID:  VideoOrientationExtensionID,
 		},
 	}
 	if kind == AudioMediaKind {
@@ -134,7 +148,6 @@ func DefaultRouterCapabilities() RTPCapabilities {
 	}
 	for _, codec := range acodecs {
 		caps.Codecs = append(caps.Codecs, RTPCodecCapability{
-			Name:                 codec.MimeType,
 			MimeType:             codec.MimeType,
 			PreferredPayloadType: uint8(codec.PayloadType),
 			ClockRate:            codec.ClockRate,
@@ -147,7 +160,6 @@ func DefaultRouterCapabilities() RTPCapabilities {
 
 	for _, codec := range vcodecs {
 		caps.Codecs = append(caps.Codecs, RTPCodecCapability{
-			Name:                 codec.MimeType,
 			MimeType:             codec.MimeType,
 			PreferredPayloadType: uint8(codec.PayloadType),
 			ClockRate:            codec.ClockRate,

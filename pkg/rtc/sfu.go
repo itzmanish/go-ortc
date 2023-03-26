@@ -22,6 +22,10 @@ var (
 	packetFactory *sync.Pool
 )
 
+// MID header extension max length (just used when setting/updating MID
+// extension).
+const MidMaxLength = uint8(8)
+
 func init() {
 	// Init packet factory
 	packetFactory = &sync.Pool{

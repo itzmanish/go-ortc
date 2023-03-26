@@ -51,6 +51,10 @@ func NewLogger(name string, opts ...Options) Logger {
 	logr := logrus.New()
 	logr.SetLevel(options.Level)
 	logr.SetOutput(os.Stdout)
+	logr.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+		DisableColors: false,
+	})
 	return &loggerStruct{
 		log: logr.WithField("name", name),
 	}

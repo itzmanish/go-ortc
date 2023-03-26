@@ -26,7 +26,7 @@ type RTPParameters struct {
 }
 
 type RTCPParameters struct {
-	SSRC        uint   `json:"ssrc"`
+	SSRC        uint   `json:"ssrc,omitempty"`
 	Cname       string `json:"cname"`
 	ReducedSize bool   `json:"reducedSize"`
 	Mux         bool   `json:"mux"`
@@ -34,13 +34,12 @@ type RTCPParameters struct {
 
 type RTPCodecParameters struct {
 	// https://draft.ortc.org/#dom-rtcrtpcodecparameters
-	Name         string                 `json:"name"`
 	MimeType     string                 `json:"mimeType"`
 	PayloadType  uint8                  `json:"payloadType"`
 	ClockRate    uint32                 `json:"clockRate"`
 	Channels     uint16                 `json:"channels,omitempty"`
-	Maxptime     uint32                 `json:"maxptime"`
-	Ptime        uint32                 `json:"ptime"`
+	Maxptime     uint32                 `json:"maxptime,omitempty"`
+	Ptime        uint32                 `json:"ptime,omitempty"`
 	RTCPFeedback []RTCPFeedback         `json:"rtcpFeedback"`
 	Parameters   map[string]interface{} `json:"parameters"`
 }
@@ -64,7 +63,7 @@ type RTPEncodingParameters struct {
 	// double          resolutionScale;
 	// double          framerateScale;
 	// double          maxFramerate;
-	Dtx string `json:"dtx"` // "enable" || "disable"
+	Dtx string `json:"dtx,omitempty"` // "enable" || "disable"
 	// I will implement them later
 }
 
@@ -72,19 +71,19 @@ type RTPDecodingParameters struct {
 	RTPCodingParameters
 }
 type RTPCodingParameters struct {
-	Ssrc                  webrtc.SSRC             `json:"ssrc"`
-	CodecPayloadType      webrtc.PayloadType      `json:"codecPayloadType"`
-	Fec                   RTPFecParameters        `json:"fec"`
-	Rtx                   webrtc.RTPRtxParameters `json:"rtx"`
-	Active                bool                    `json:"active"`
-	Rid                   string                  `json:"rid"`
-	EncodingId            string                  `json:"encodingId"`
-	DependencyEncodingIds []string                `json:"dependencyEncodingIds"`
+	Ssrc                  webrtc.SSRC              `json:"ssrc"`
+	CodecPayloadType      webrtc.PayloadType       `json:"codecPayloadType,omitempty"`
+	Fec                   *RTPFecParameters        `json:"fec,omitempty"`
+	Rtx                   *webrtc.RTPRtxParameters `json:"rtx,omitempty"`
+	Active                bool                     `json:"active,omitempty"`
+	Rid                   string                   `json:"rid,omitempty"`
+	EncodingId            string                   `json:"encodingId,omitempty"`
+	DependencyEncodingIds []string                 `json:"dependencyEncodingIds,omitempty"`
 }
 
 type RTPFecParameters struct {
-	Ssrc      webrtc.SSRC `json:"ssrc"`
-	Mechanism string      `json:"mechanism"`
+	Ssrc      webrtc.SSRC `json:"ssrc,omitempty"`
+	Mechanism string      `json:"mechanism,omitempty"`
 }
 type RTPCapabilities struct {
 	Codecs           []RTPCodecCapability `json:"codecs"`
@@ -93,14 +92,13 @@ type RTPCapabilities struct {
 
 type RTPCodecCapability struct {
 	// webrtc.RTPCodecCapability
-	Name                 string         `json:"name"`
 	MimeType             string         `json:"mimeType"`
 	PreferredPayloadType uint8          `json:"preferredPayloadType"`
 	ClockRate            uint32         `json:"clockRate"`
 	Channels             uint16         `json:"channels,omitempty"`
-	Maxptime             uint32         `json:"maxptime"`
-	Ptime                uint32         `json:"ptime"`
-	SDPFmtpLine          string         `json:"fmtp"`
+	Maxptime             uint32         `json:"maxptime,omitempty"`
+	Ptime                uint32         `json:"ptime,omitempty"`
+	SDPFmtpLine          string         `json:"fmtp,omitempty"`
 	RTCPFeedback         []RTCPFeedback `json:"rtcpFeedback"`
 
 	// extended
@@ -208,14 +206,19 @@ func ParseRTPReciveParametersFromORTC(parameters RTPReceiveParameters) webrtc.RT
 		Encodings: make([]webrtc.RTPDecodingParameters, len(parameters.Encodings)),
 	}
 	for i, params := range parameters.Encodings {
-		receivingParameters.Encodings[i] = webrtc.RTPDecodingParameters{
+		converted := webrtc.RTPDecodingParameters{
 			RTPCodingParameters: webrtc.RTPCodingParameters{
 				RID:         params.Rid,
 				SSRC:        params.Ssrc,
 				PayloadType: params.CodecPayloadType,
-				RTX:         params.Rtx,
 			},
 		}
+		if params.Rtx != nil {
+			converted.RTX = *params.Rtx
+		} else {
+			converted.RTX = webrtc.RTPRtxParameters{}
+		}
+		receivingParameters.Encodings[i] = converted
 	}
 	return receivingParameters
 }
@@ -245,10 +248,10 @@ func ParseRTPParametersToORTC(params webrtc.RTPParameters) RTPParameters {
 
 func ParseRTPCodecParameterToORTC(codec webrtc.RTPCodecParameters) RTPCodecParameters {
 	return RTPCodecParameters{
-		Name:         codec.MimeType,
 		MimeType:     codec.MimeType,
 		ClockRate:    codec.ClockRate,
 		Channels:     codec.Channels,
+		Parameters:   ParseFMTPToParameters(codec.SDPFmtpLine),
 		RTCPFeedback: ParseRTCPFeedbackToORTC(codec.RTCPFeedback),
 		PayloadType:  uint8(codec.PayloadType),
 	}
@@ -262,7 +265,6 @@ func ParseRTPCodecCapabilityToORTC(codec webrtc.RTPCodecCapability, kind MediaKi
 		parsedKind = "video"
 	}
 	return RTPCodecCapability{
-		Name:         codec.MimeType,
 		MimeType:     codec.MimeType,
 		ClockRate:    codec.ClockRate,
 		Channels:     codec.Channels,
@@ -319,7 +321,7 @@ func ParseRTPEncodingToORTC(encodings webrtc.RTPEncodingParameters) RTPEncodingP
 		RTPCodingParameters: RTPCodingParameters{
 			Rid:              encodings.RID,
 			Ssrc:             encodings.SSRC,
-			Rtx:              encodings.RTX,
+			Rtx:              &encodings.RTX,
 			CodecPayloadType: encodings.PayloadType,
 		},
 	}
@@ -332,6 +334,7 @@ func ParseParametersToFMTP(params map[string]any) string {
 	for k, v := range params {
 		parsed += fmt.Sprintf("%v=%v;", k, v)
 	}
+	parsed = strings.TrimSuffix(parsed, ";")
 	return parsed
 }
 
@@ -342,6 +345,9 @@ func ParseFMTPToParameters(fmtp string) map[string]any {
 	}
 	fmtps := strings.Split(strings.TrimSpace(fmtp), ";")
 	for _, v := range fmtps {
+		if len(v) == 0 {
+			continue
+		}
 		ff := strings.Split(v, "=")
 		iValue, err := strconv.Atoi(ff[1])
 		if err != nil {

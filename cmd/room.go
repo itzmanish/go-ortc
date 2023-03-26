@@ -57,7 +57,7 @@ func (r *Room) RemovePeer(id uint) {
 }
 
 func (r *Room) HandleIncomingMessage(peer *Peer, msg *WebSocketMessage, cb func([]byte, error)) {
-	r.logger.Infof("Got incoming message %+v", msg)
+	r.logger.Debugf("Got incoming message %+v", msg)
 	switch msg.MessageType {
 	case JoinRoomMessage:
 		{

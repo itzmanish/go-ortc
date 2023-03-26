@@ -19,6 +19,7 @@ require (
 )
 
 require (
+	github.com/at-wat/ebml-go v0.16.0
 	github.com/gammazero/deque v0.1.0
 	github.com/go-logr/logr v1.2.3
 	github.com/google/uuid v1.3.0 // indirect

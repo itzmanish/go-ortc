@@ -642,7 +642,7 @@ func (b *Buffer) getRTCP() []rtcp.Packet {
 			Reports: []rtcp.ReceptionReport{*rr},
 		})
 	}
-	b.logger.Infof("producer rtcp: %+v", rr)
+	b.logger.Debugf("producer rtcp: %+v", rr)
 	return pkts
 }
 

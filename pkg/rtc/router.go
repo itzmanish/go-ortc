@@ -6,8 +6,9 @@ import (
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/pkg/saver"
 	"github.com/pion/rtcp"
-	"github.com/pion/webrtc/v3"
+	"go.uber.org/atomic"
 )
 
 // A router object is equivalent to a room
@@ -16,6 +17,7 @@ import (
 type Router struct {
 	Id uint
 
+	closed                     atomic.Bool
 	transports                 map[uint]*WebRTCTransport
 	producers                  map[uint]*Producer
 	consumers                  map[uint]*Consumer
@@ -23,8 +25,7 @@ type Router struct {
 	bufferFactory              *buffer.Factory
 	rtcpCh                     chan []rtcp.Packet
 	capabilities               RTPCapabilities
-	// selectedCapabilities       map[MediaKind]RTPCapabilities
-	config RouterConfig
+	config                     RouterConfig
 
 	currentTransportId uint
 }
@@ -41,9 +42,23 @@ func NewRouter(id uint, bff *buffer.Factory, config RouterConfig) *Router {
 		currentTransportId:         0,
 		bufferFactory:              bff,
 		capabilities:               DefaultRouterCapabilities(),
-		// selectedCapabilities:       make(map[MediaKind]RTPCapabilities),
 	}
 }
+
+func (router *Router) Close() {
+	if router.closed.Load() {
+		return
+	}
+	router.closed.Store(true)
+	for _, t := range router.transports {
+		t.Close()
+	}
+	router.transports = nil
+	router.producerIdToConsumerIdsMap = nil
+	router.consumers = nil
+	router.producers = nil
+}
+
 func (router *Router) GetRouterCapabilities() RTPCapabilities {
 	return router.capabilities
 }
@@ -65,16 +80,12 @@ func (router *Router) AddProducer(producer *Producer) error {
 		return fmt.Errorf("router.AddProducer(): buff is nil")
 	}
 	buff.OnRtcpFeedback(producer.SendRTCP)
-
-	if track.Kind() == webrtc.RTPCodecTypeVideo {
-		// enable twcc if it's video
-		buff.SetTWCC(producer.twcc)
-	}
+	rtcpReader.OnPacket(producer.handleRTCP)
+	buff.SetTWCC(producer.twcc)
 
 	buff.Bind(ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)))
 
 	producer.buffer = buff
-	producer.rtcpReader = rtcpReader
 	producer.OnRTP(router.OnRTPPacket())
 	producer.OnRTCP(router.OnRTCPPacket())
 	router.producers[producer.Id] = producer
@@ -90,6 +101,7 @@ func (router *Router) AddConsumer(consumer *Consumer) error {
 	}
 	consumerIds = append(consumerIds, consumer.Id)
 	router.producerIdToConsumerIdsMap[consumer.producer.Id] = consumerIds
+
 	return nil
 }
 
@@ -129,4 +141,17 @@ func (router *Router) generateNewWebrtcTransportID() uint {
 	}
 	router.currentTransportId += 1
 	return router.currentTransportId
+}
+
+// NOTE: debugging purpose only
+func (router *Router) storeConsumerData(filename string, consumer *Consumer) {
+	saver := saver.NewWebmSaver(filename)
+	saver.InitWriter(0, 0)
+	consumer.onRTPPacket = func(id uint, packet *buffer.ExtPacket) {
+		if consumer.Kind() == AudioMediaKind {
+			saver.PushOpus(packet.Packet.Clone())
+		} else if consumer.Kind() == VideoMediaKind {
+			saver.PushVP8(packet.Packet.Clone())
+		}
+	}
 }

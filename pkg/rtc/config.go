@@ -2,6 +2,7 @@ package rtc
 
 import (
 	"os"
+	"time"
 
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 	"github.com/pion/logging"
@@ -36,6 +37,7 @@ func NewSFUConfig(bff *buffer.Factory) (*SFUConfig, error) {
 	}
 	se.DisableMediaEngineCopy(true)
 	se.SetLite(true)
+	se.SetICETimeouts(5*time.Minute, 5*time.Minute, 5*time.Minute)
 	return &SFUConfig{
 		bufferFactory: bff,
 		routerConfig: RouterConfig{
