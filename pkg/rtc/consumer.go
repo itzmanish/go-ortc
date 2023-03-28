@@ -67,7 +67,7 @@ func newConsumer(id uint, producer *Producer, track *DownTrack, transport *WebRT
 		Logger:      logger.NewLogger(fmt.Sprintf("Consumer [id: %v]", id)).WithField("kind", producer.kind),
 	}
 	go consumer.rtcpWriteWorker()
-	consumer.Logger.Infof("webrtc params: %+v, \nortc params: %+v", parameters, ortcParams)
+	go consumer.rtcpReaderWorker()
 	return consumer, nil
 }
 
@@ -111,6 +111,24 @@ func (c *Consumer) Write(packet *buffer.ExtPacket) error {
 func (c *Consumer) SendRTCP(packets []rtcp.Packet) (int, error) {
 	c.Logger.Debug("sending rtcp to consumer", packets)
 	return c.transport.WriteRTCP(packets)
+}
+
+func (c *Consumer) rtcpReaderWorker() {
+	rtcpBuf := make([]byte, 1500)
+	for {
+		select {
+		case <-c.closeCh:
+			c.Logger.Warn("consumer closed! stopping writing SR...")
+			return
+		default:
+			// NOTE: I hate this but for some reason if we don't keep doing sender.Read()
+			// then you won't get any data on rtcp buffer reader.
+			_, _, rtcpErr := c.sender.Read(rtcpBuf)
+			if rtcpErr != nil {
+				return
+			}
+		}
+	}
 }
 
 func (c *Consumer) rtcpWriteWorker() {

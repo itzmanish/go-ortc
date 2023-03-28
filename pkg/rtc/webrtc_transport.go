@@ -233,7 +233,7 @@ func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, erro
 		return nil, errFailedToCreateDownTrack(err)
 	}
 	dt.OnTransportCCFeedback(func(tlc *rtcp.TransportLayerCC) {
-		logger.Info("sending transport cc to evaluate", tlc)
+		logger.Debug("sending transport cc to evaluate", tlc)
 		err := t.bwe.WriteRTCP([]rtcp.Packet{tlc}, nil)
 		if err != nil {
 			logger.Error("Error on processing incoming tcc packet", err)

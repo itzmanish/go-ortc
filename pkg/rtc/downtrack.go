@@ -402,5 +402,4 @@ func (d *DownTrack) handleRTCP(bytes []byte) {
 		}
 	}
 
-	d.logger.Infof("got RR: %+v", pkts)
 }

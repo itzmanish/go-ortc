@@ -12,6 +12,10 @@ const VideoOrientationExtensionID = 8
 
 func SetupConsumerMediaEngineWithProducerParams(me *webrtc.MediaEngine, params webrtc.RTPParameters, kind webrtc.RTPCodecType, simulcast bool) error {
 	for _, codec := range params.Codecs {
+		// remove rtx from codecs
+		if strings.Contains(codec.MimeType, "rtx") {
+			continue
+		}
 		err := me.RegisterCodec(codec, kind)
 		if err != nil {
 			return err

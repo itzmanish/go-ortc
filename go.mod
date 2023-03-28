@@ -10,6 +10,11 @@ require (
 	nhooyr.io/websocket v1.8.7
 )
 
+// replace (
+// 	github.com/pion/transport/v2 => ../pion/transport
+// 	github.com/pion/srtp/v2 => ../pion/srtp
+// )
+
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/klauspost/compress v1.10.3 // indirect
@@ -22,7 +27,7 @@ require (
 	github.com/at-wat/ebml-go v0.16.0
 	github.com/gammazero/deque v0.1.0
 	github.com/go-logr/logr v1.2.3
-	github.com/google/uuid v1.3.0 // indirect
+	github.com/google/uuid v1.3.0
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/pion/datachannel v1.5.5 // indirect
 	github.com/pion/dtls/v2 v2.2.6 // indirect
