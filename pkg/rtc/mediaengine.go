@@ -7,24 +7,34 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
-const VideoOrientationURI = "urn:3gpp:video-orientation"
-const VideoOrientationExtensionID = 8
+const (
+	VideoOrientationURI         = "urn:3gpp:video-orientation"
+	VideoOrientationExtensionID = 8
 
-func SetupConsumerMediaEngineWithProducerParams(me *webrtc.MediaEngine, params webrtc.RTPParameters, kind webrtc.RTPCodecType, simulcast bool) error {
+	TimeOffsetURI = "urn:ietf:params:rtp-hdrext:toffset"
+	TimeOffsetID  = 9
+)
+
+func SetupConsumerMediaEngineWithProducerParams(me *webrtc.MediaEngine, params webrtc.RTPParameters, kind webrtc.RTPCodecType) error {
 	for _, codec := range params.Codecs {
-		// remove rtx from codecs
-		if strings.Contains(codec.MimeType, "rtx") {
-			continue
+		// remove twcc and add remb
+		mfb := []webrtc.RTCPFeedback{}
+		for _, fb := range codec.RTCPFeedback {
+			if fb.Type != "transport-cc" {
+				mfb = append(mfb, fb)
+			}
 		}
+		codec.RTCPFeedback = mfb
 		err := me.RegisterCodec(codec, kind)
 		if err != nil {
 			return err
 		}
 	}
 	for _, hExt := range params.HeaderExtensions {
-		if !simulcast && hExt.URI == sdp.SDESRTPStreamIDURI {
+		if hExt.URI == sdp.TransportCCURI {
 			continue
 		}
+
 		err := me.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
 			URI: hExt.URI,
 		}, kind)
@@ -64,7 +74,8 @@ func GetCodecsForKind(kind MediaKind) []webrtc.RTPCodecParameters {
 			},
 		}
 	case VideoMediaKind:
-		videoRTCPFeedback := []webrtc.RTCPFeedback{{Type: "transport-cc", Parameter: ""}, {Type: "ccm", Parameter: "fir"}, {Type: "nack", Parameter: ""}, {Type: "nack", Parameter: "pli"}}
+		videoRTCPFeedback := []webrtc.RTCPFeedback{{Type: webrtc.TypeRTCPFBGoogREMB, Parameter: ""}, {Type: webrtc.TypeRTCPFBTransportCC, Parameter: ""},
+			{Type: webrtc.TypeRTCPFBCCM, Parameter: "fir"}, {Type: webrtc.TypeRTCPFBNACK, Parameter: ""}, {Type: webrtc.TypeRTCPFBNACK, Parameter: "pli"}}
 		return []webrtc.RTPCodecParameters{
 			{
 				RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000, Channels: 0, SDPFmtpLine: "", RTCPFeedback: videoRTCPFeedback},
@@ -99,10 +110,10 @@ func GetHeaderExtensionForKind(kind MediaKind) []webrtc.RTPHeaderExtensionParame
 			URI: sdp.SDESMidURI,
 			ID:  1,
 		},
-		{
-			URI: sdp.SDESRTPStreamIDURI,
-			ID:  2,
-		},
+		// {
+		// 	URI: sdp.SDESRTPStreamIDURI,
+		// 	ID:  2,
+		// },
 		{
 			URI: sdp.ABSSendTimeURI,
 			ID:  3,
@@ -118,6 +129,10 @@ func GetHeaderExtensionForKind(kind MediaKind) []webrtc.RTPHeaderExtensionParame
 		{
 			URI: VideoOrientationURI,
 			ID:  VideoOrientationExtensionID,
+		},
+		{
+			URI: TimeOffsetURI,
+			ID:  TimeOffsetID,
 		},
 	}
 	if kind == AudioMediaKind {

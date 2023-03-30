@@ -82,7 +82,7 @@ func (p *Peer) CloseTransport(id uint) error {
 	return transport.Close()
 }
 
-func (p *Peer) Produce(kind string, parameters rtc.RTPReceiveParameters, simulcast bool) (*rtc.Producer, error) {
+func (p *Peer) Produce(kind string, parameters rtc.RTPReceiveParameters) (*rtc.Producer, error) {
 	transport := p.GetProducingTransport()
 	if transport == nil {
 		return nil, fmt.Errorf("producing transport not found")
@@ -95,7 +95,7 @@ func (p *Peer) Produce(kind string, parameters rtc.RTPReceiveParameters, simulca
 	} else {
 		return nil, fmt.Errorf("unknown media kind to produce: %v", kind)
 	}
-	producer, err := transport.Produce(mediaKind, parameters, simulcast)
+	producer, err := transport.Produce(mediaKind, parameters)
 	if err != nil {
 		return nil, err
 	}

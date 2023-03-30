@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/itzmanish/go-ortc/pkg/buffer"
@@ -13,16 +12,17 @@ import (
 	"github.com/livekit/mediatransportutil/pkg/twcc"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
+	"go.uber.org/atomic"
 )
 
 type Producer struct {
 	logger.Logger
 	Id uint
 
-	closeOnce   sync.Once
-	closed      atomic.Bool
-	paused      atomic.Bool
-	isSimulcast bool
+	closeOnce sync.Once
+	closeCh   chan struct{}
+	closed    atomic.Bool
+	paused    atomic.Bool
 
 	parameters RTPReceiveParameters
 	kind       MediaKind
@@ -44,7 +44,7 @@ type OnRTPPacketHandlerFunc func(producerId uint, rtp *buffer.ExtPacket)
 type OnRTCPPacketHandlerFunc func(producerId uint, rtcp []rtcp.Packet)
 type OnProducerCloseHandlerFunc func()
 
-func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTransport, params RTPReceiveParameters, simulcast bool) *Producer {
+func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTransport, params RTPReceiveParameters) *Producer {
 	track := receiver.Track()
 	producer := &Producer{
 		Id:         id,
@@ -54,12 +54,14 @@ func newProducer(id uint, receiver *webrtc.RTPReceiver, transport *WebRTCTranspo
 		kind:       MediaKind(track.Kind()),
 		parameters: params,
 		trackID:    uuid.NewString(),
+		closeCh:    make(chan struct{}),
+		closed:     *atomic.NewBool(false),
+		paused:     *atomic.NewBool(false),
 		// stream id needs to be generated as unique
-		streamID:    params.Rtcp.Cname,
-		isSimulcast: simulcast,
-		twcc:        transport.twcc,
-		rtcpChan:    make(chan []rtcp.Packet),
-		Logger:      logger.NewLogger(fmt.Sprintf("Producer [id: %v]", id)).WithField("Kind", track.Kind().String()),
+		streamID: params.Rtcp.Cname,
+		twcc:     transport.twcc,
+		rtcpChan: make(chan []rtcp.Packet),
+		Logger:   logger.NewLogger(fmt.Sprintf("Producer [id: %v]", id)).WithField("Kind", track.Kind().String()),
 	}
 	return producer
 }
@@ -82,13 +84,13 @@ func (p *Producer) OnRTCP(h OnRTCPPacketHandlerFunc) {
 }
 
 func (p *Producer) Close() {
-	if p.closed.Load() {
+	if p.closed.Swap(true) {
 		return
 	}
-
+	close(p.closeCh)
 	p.closeOnce.Do(func() {
 		p.closed.Store(true)
-		p.closeTrack()
+		p.receiver.Stop()
 	})
 	if p.onCloseHandler != nil {
 		p.onCloseHandler()
@@ -103,14 +105,18 @@ func (p *Producer) Pause(value bool) {
 	p.paused.Store(value)
 }
 
+func (p *Producer) Paused() bool {
+	return p.paused.Load()
+}
+
 func (p *Producer) SendRTCP(packets []rtcp.Packet) {
 	if packets == nil || p.closed.Load() {
 		return
 	}
-	logger.Debugf("PRODUCER::SendRTCP sending rtcp fb: %+v", packets)
+	p.Logger.Debugf("PRODUCER::SendRTCP sending rtcp fb: %+v", packets)
 	_, err := p.WriteRTCP(packets)
 	if err != nil {
-		logger.Error("Producer::SendRTCP Error:", err)
+		p.Logger.Error("Producer::SendRTCP Error:", err)
 	}
 }
 
@@ -121,29 +127,34 @@ func (p *Producer) WriteRTCP(pkts []rtcp.Packet) (int, error) {
 func (p *Producer) GetRTCPSenderReportDataExt() *buffer.RTCPSenderReportDataExt {
 	return p.buffer.GetSenderReportDataExt()
 }
-func (p *Producer) closeTrack() {
 
+func (p *Producer) ReadRTP(dst []byte, sn uint16) (int, error) {
+	return p.buffer.GetPacket(dst, sn)
 }
 
-func (p *Producer) readRTP() {
+func (p *Producer) readRTPWorker() {
 	defer func() {
-		p.closeOnce.Do(func() {
-			p.closed.Store(true)
-			p.closeTrack()
-		})
+		p.Close()
 	}()
-	logger.Infof("Producer %v: reading RTP packets", p.Id)
+	p.Logger.Infof("Producer %v: reading RTP packets", p.Id)
 	for {
-		pktBuf := make([]byte, bucket.MaxPktSize)
-		pkt, err := p.buffer.ReadExtended(pktBuf)
-		if err == io.EOF {
+		select {
+		case <-p.closeCh:
+			p.Logger.Warn("producer close, stopping readRTPWorker")
 			return
-		} else if err != nil {
-			logger.Errorf("Producer %s: error reading RTP packets: %s", p.Id, err)
-			return
-		}
-		if p.onRTPPacket != nil {
-			p.onRTPPacket(p.Id, pkt)
+		default:
+			pktBuf := make([]byte, bucket.MaxPktSize)
+			pkt, err := p.buffer.ReadExtended(pktBuf)
+			if err == io.EOF {
+				p.Logger.Warn("Error reading from buffer, exiting..", err)
+				return
+			} else if err != nil {
+				logger.Errorf("Producer %s: error reading RTP packets: %s", p.Id, err)
+				return
+			}
+			if p.onRTPPacket != nil && !p.Paused() {
+				p.onRTPPacket(p.Id, pkt)
+			}
 		}
 	}
 }

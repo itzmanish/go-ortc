@@ -18,12 +18,12 @@ type Consumer struct {
 	logger.Logger
 	Id uint
 
-	closed      atomic.Bool
-	closeCh     chan bool
-	paused      atomic.Bool
-	priority    uint
-	kind        MediaKind
-	isSimulcast bool
+	closed           atomic.Bool
+	closeCh          chan bool
+	paused           atomic.Bool
+	priority         uint
+	kind             MediaKind
+	availableBitrate float32
 
 	parameters RTPSendParameters
 	track      *DownTrack
@@ -66,8 +66,10 @@ func newConsumer(id uint, producer *Producer, track *DownTrack, transport *WebRT
 		onRTPPacket: nil,
 		Logger:      logger.NewLogger(fmt.Sprintf("Consumer [id: %v]", id)).WithField("kind", producer.kind),
 	}
+	// add handler to handle remb packets
+	track.OnREMBFeedback(consumer.handleREMB)
 	go consumer.rtcpWriteWorker()
-	go consumer.rtcpReaderWorker()
+	go consumer.rtcpReadWorker()
 	return consumer, nil
 }
 
@@ -113,7 +115,11 @@ func (c *Consumer) SendRTCP(packets []rtcp.Packet) (int, error) {
 	return c.transport.WriteRTCP(packets)
 }
 
-func (c *Consumer) rtcpReaderWorker() {
+func (c *Consumer) handleREMB(pkt *rtcp.ReceiverEstimatedMaximumBitrate) {
+	c.availableBitrate = pkt.Bitrate
+}
+
+func (c *Consumer) rtcpReadWorker() {
 	rtcpBuf := make([]byte, 1500)
 	for {
 		select {

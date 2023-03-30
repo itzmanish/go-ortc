@@ -46,10 +46,9 @@ func NewRouter(id uint, bff *buffer.Factory, config RouterConfig) *Router {
 }
 
 func (router *Router) Close() {
-	if router.closed.Load() {
+	if router.closed.Swap(true) {
 		return
 	}
-	router.closed.Store(true)
 	for _, t := range router.transports {
 		t.Close()
 	}

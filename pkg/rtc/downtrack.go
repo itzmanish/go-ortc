@@ -2,6 +2,7 @@ package rtc
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -21,8 +22,7 @@ const (
 )
 
 // DownTrack  implements TrackLocal, is the track used to write packets
-// to SFU Subscriber, the track handle the packets for simple, simulcast
-// and SVC Publisher.
+// to SFU Subscriber, the track handle the packets for simple producer
 type DownTrack struct {
 	id string
 
@@ -57,6 +57,7 @@ type DownTrack struct {
 	rtpStats              *buffer.RTPStats
 	deltaStatsSnapshotId  uint32
 	onTransportCCFeedback func(*rtcp.TransportLayerCC)
+	onREMBFeedback        func(*rtcp.ReceiverEstimatedMaximumBitrate)
 
 	logger logger.Logger
 }
@@ -153,10 +154,6 @@ func (d *DownTrack) Kind() webrtc.RTPCodecType {
 	}
 }
 
-func (d *DownTrack) Stop() {
-	// TODO: close the consumer because the track is stopped
-}
-
 // WriteRTP writes a RTP Packet to the DownTrack
 func (d *DownTrack) WriteRTP(p *buffer.ExtPacket) error {
 	if !d.enabled.Load() || !d.bound.Load() {
@@ -209,6 +206,14 @@ func (d *DownTrack) OnBind(fn func()) {
 	d.onBind = fn
 }
 
+func (d *DownTrack) OnTransportCCFeedback(hdlr func(*rtcp.TransportLayerCC)) {
+	d.onTransportCCFeedback = hdlr
+}
+
+func (d *DownTrack) OnREMBFeedback(hdlr func(*rtcp.ReceiverEstimatedMaximumBitrate)) {
+	d.onREMBFeedback = hdlr
+}
+
 func (d *DownTrack) CreateSourceDescriptionChunks() []rtcp.SourceDescriptionChunk {
 	if !d.bound.Load() {
 		return nil
@@ -222,10 +227,6 @@ func (d *DownTrack) CreateSourceDescriptionChunks() []rtcp.SourceDescriptionChun
 			}},
 		},
 	}
-}
-
-func (d *DownTrack) OnTransportCCFeedback(hdlr func(*rtcp.TransportLayerCC)) {
-	d.onTransportCCFeedback = hdlr
 }
 
 func (d *DownTrack) CreateSenderReport() *rtcp.SenderReport {
@@ -277,7 +278,7 @@ func (d *DownTrack) writeSimpleRTP(extPkt *buffer.ExtPacket) error {
 	return nil
 }
 
-func (d *DownTrack) prepareRTPHeaderForForwarding(hdr *rtp.Header, ts uint32, sn uint16) error {
+func (d *DownTrack) prepareRTPHeaderForForwarding(hdr *rtp.Header, ts uint32, sn uint16) (err error) {
 	hdr.PayloadType = d.payloadType
 	hdr.Timestamp = ts
 	hdr.SequenceNumber = sn
@@ -289,7 +290,6 @@ func (d *DownTrack) prepareRTPHeaderForForwarding(hdr *rtp.Header, ts uint32, sn
 	hdr.ExtensionProfile = 0
 	hdr.Extensions = []rtp.Extension{}
 	for _, hExt := range d.enabledHeaders {
-		var err error
 		switch hExt.URI {
 		case sdp.SDESMidURI:
 			// Here we assume that there is MidMaxLength available bytes, even if now
@@ -300,8 +300,8 @@ func (d *DownTrack) prepareRTPHeaderForForwarding(hdr *rtp.Header, ts uint32, sn
 			err = hdr.SetExtension(uint8(hExt.ID), []byte(d.Mid()))
 		case sdp.ABSSendTimeURI:
 			sendTime := rtp.NewAbsSendTimeExtension(time.Now())
-			b, err := sendTime.Marshal()
-			if err != nil {
+			b, err1 := sendTime.Marshal()
+			if err1 != nil {
 				break
 			}
 
@@ -309,8 +309,8 @@ func (d *DownTrack) prepareRTPHeaderForForwarding(hdr *rtp.Header, ts uint32, sn
 		case sdp.TransportCCURI:
 			sequenceNumber := atomic.AddUint32(&d.twccSN, 1) - 1
 
-			tcc, err := (&rtp.TransportCCExtension{TransportSequence: uint16(sequenceNumber)}).Marshal()
-			if err != nil {
+			tcc, err1 := (&rtp.TransportCCExtension{TransportSequence: uint16(sequenceNumber)}).Marshal()
+			if err1 != nil {
 				break
 			}
 			err = hdr.SetExtension(uint8(hExt.ID), tcc)
@@ -320,10 +320,69 @@ func (d *DownTrack) prepareRTPHeaderForForwarding(hdr *rtp.Header, ts uint32, sn
 			}
 		}
 		if err != nil {
-			return err
+			return
 		}
 	}
 	return nil
+}
+
+func (d *DownTrack) retransmitPackets(nacks []uint16) {
+	if d.sequencer == nil {
+		return
+	}
+
+	var pool *[]byte
+	defer func() {
+		if pool != nil {
+			packetFactory.Put(pool)
+			pool = nil
+		}
+	}()
+	src := packetFactory.Get().(*[]byte)
+	defer packetFactory.Put(src)
+
+	nackAcks := uint32(0)
+	nackMisses := uint32(0)
+	numRepeatedNACKs := uint32(0)
+	for _, meta := range d.sequencer.getPacketsMeta(nacks) {
+		nackAcks++
+
+		if pool != nil {
+			packetFactory.Put(pool)
+			pool = nil
+		}
+
+		pktBuff := *src
+		n, err := d.producer.ReadRTP(pktBuff, meta.sourceSeqNo)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			nackMisses++
+			continue
+		}
+
+		if meta.nacked > 1 {
+			numRepeatedNACKs++
+		}
+
+		var pkt rtp.Packet
+		if err = pkt.Unmarshal(pktBuff[:n]); err != nil {
+			continue
+		}
+		err = d.prepareRTPHeaderForForwarding(&pkt.Header, meta.timestamp, meta.targetSeqNo)
+		if err != nil {
+			d.logger.Error("writing rtp header extensions err", err)
+			continue
+		}
+
+		if _, err = d.writeStream.WriteRTP(&pkt.Header, pkt.Payload); err != nil {
+			d.logger.Error("writing rtx packet err", err)
+		} else {
+			d.rtpStats.Update(&pkt.Header, len(pkt.Payload), 0, time.Now().UnixNano())
+		}
+	}
+	d.rtpStats.UpdateNackProcessed(nackAcks, nackMisses, numRepeatedNACKs)
 }
 
 func (d *DownTrack) handleRTCP(bytes []byte) {
@@ -344,6 +403,7 @@ func (d *DownTrack) handleRTCP(bytes []byte) {
 
 	rttToReport := uint32(0)
 
+	var numNACKs uint32
 	var numPLIs uint32
 	var numFIRs uint32
 	for _, pkt := range pkts {
@@ -357,11 +417,9 @@ func (d *DownTrack) handleRTCP(bytes []byte) {
 			sendPliOnce()
 
 		case *rtcp.ReceiverEstimatedMaximumBitrate:
-			d.logger.Infof("DO we get remb packet?: %+v", p)
-			// if d.onREMB != nil {
-			// 	d.onREMB(d, p)
-			// }
-			// TODO: no remb for now
+			if d.onREMBFeedback != nil {
+				d.onREMBFeedback(p)
+			}
 
 		case *rtcp.ReceiverReport:
 			// create new receiver report w/ only valid reception reports
@@ -377,14 +435,14 @@ func (d *DownTrack) handleRTCP(bytes []byte) {
 			}
 
 		case *rtcp.TransportLayerNack:
-			// var nacks []uint16
-			// for _, pair := range p.Nacks {
-			// 	packetList := pair.PacketList()
-			// 	numNACKs += uint32(len(packetList))
-			// 	nacks = append(nacks, packetList...)
-			// }
-			// go d.retransmitPackets(nacks)
-			// TODO: no retramission for now
+			var nacks []uint16
+			for _, pair := range p.Nacks {
+				packetList := pair.PacketList()
+				numNACKs += uint32(len(packetList))
+				nacks = append(nacks, packetList...)
+			}
+			d.logger.Info("Got nack packets", nacks)
+			go d.retransmitPackets(nacks)
 
 		case *rtcp.TransportLayerCC:
 			if p.MediaSSRC == d.ssrc && d.onTransportCCFeedback != nil {
@@ -401,5 +459,4 @@ func (d *DownTrack) handleRTCP(bytes []byte) {
 			d.sequencer.setRTT(rttToReport)
 		}
 	}
-
 }

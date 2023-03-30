@@ -89,7 +89,7 @@ func testProducerHelper(t *testing.T, server *WebRTCTransport, client *testORTCS
 				},
 			},
 			Encodings: parsedSendingParams.Encodings,
-		}), false)
+		}))
 		errCh <- err
 		if producer == nil {
 			errCh <- fmt.Errorf("Producer is nil")
@@ -163,7 +163,7 @@ func TestConsume(t *testing.T) {
 	var producer *Producer
 	go func(testing *testing.T) {
 		<-time.After(20 * time.Millisecond)
-		producer, err = producingServer.Produce(VideoMediaKind, ConvertRTPSendParametersToRTPReceiveParameters(parsedSendingParams), false)
+		producer, err = producingServer.Produce(VideoMediaKind, ConvertRTPSendParametersToRTPReceiveParameters(parsedSendingParams))
 		errCh <- err
 		if producer == nil {
 			errCh <- fmt.Errorf("Producer is nil")

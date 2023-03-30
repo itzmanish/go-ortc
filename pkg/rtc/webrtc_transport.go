@@ -90,7 +90,6 @@ func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTranspo
 		return nil, err
 	}
 	transport.caps = caps
-
 	transport.addListeners()
 
 	return transport, nil
@@ -149,7 +148,7 @@ func (t *WebRTCTransport) Stop() error {
 	return err
 }
 
-func (t *WebRTCTransport) Produce(kind MediaKind, parameters RTPReceiveParameters, simulcast bool) (*Producer, error) {
+func (t *WebRTCTransport) Produce(kind MediaKind, parameters RTPReceiveParameters) (*Producer, error) {
 	err := SetupProducerMediaEngineForKind(t.me, kind)
 	if err != nil {
 		return nil, err
@@ -182,14 +181,14 @@ func (t *WebRTCTransport) Produce(kind MediaKind, parameters RTPReceiveParameter
 			}
 		})
 	}
-	producer := newProducer(t.getNextProducerId(), receiver, t, parameters, simulcast)
+	producer := newProducer(t.getNextProducerId(), receiver, t, parameters)
 
 	err = t.router.AddProducer(producer)
 	if err != nil {
 		return nil, err
 	}
 
-	go producer.readRTP()
+	go producer.readRTPWorker()
 
 	t.producers[producer.Id] = producer
 
@@ -205,7 +204,6 @@ func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, erro
 	err := SetupConsumerMediaEngineWithProducerParams(t.me,
 		ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)),
 		webrtc.RTPCodecType(producer.kind),
-		producer.isSimulcast,
 	)
 	if err != nil {
 		return nil, err

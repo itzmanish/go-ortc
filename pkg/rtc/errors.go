@@ -23,10 +23,6 @@ var (
 		return fmt.Errorf("failed to create down track: %s", e)
 	}
 
-	errFailedToConsume = func(e error) error {
-		return fmt.Errorf("failed to consume: %s", e)
-	}
-
 	errFailedToCreateConsumer = func(e error) error {
 		return fmt.Errorf("failed to create consumer: %s", e)
 	}

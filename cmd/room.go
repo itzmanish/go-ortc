@@ -155,14 +155,13 @@ func (r *Room) HandleIncomingMessage(peer *Peer, msg *WebSocketMessage, cb func(
 			var payload struct {
 				Kind       string                   `json:"kind"`
 				Parameters rtc.RTPReceiveParameters `json:"rtpParameters"`
-				Simulcast  bool                     `json:"simulcast"`
 			}
 			err := json.Unmarshal([]byte(msg.Payload), &payload)
 			if err != nil {
 				cb(nil, err)
 				return
 			}
-			producer, err := peer.Produce(payload.Kind, payload.Parameters, payload.Simulcast)
+			producer, err := peer.Produce(payload.Kind, payload.Parameters)
 			if err != nil {
 				cb(nil, err)
 				return
