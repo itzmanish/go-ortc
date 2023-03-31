@@ -16,4 +16,4 @@ and SDP. This follows ORTC APIs.
 - [x] Nack for outgoing RTP
 - [ ] Datachannels over SCTP
 - [ ] Simulcast (pion doesn't expose handler for unhandledSSRC)
-- [ ] RTX support for incoming RTP (pion limitation)
+- [ ] RTX support for distinct ssrc for incoming RTP (pion limitation)[https://github.com/webrtc-rs/webrtc/issues/295] 
