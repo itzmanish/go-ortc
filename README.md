@@ -14,6 +14,7 @@ and SDP. This follows ORTC APIs.
 - [x] Nack over same SSRC for Incoming RTP
 - [x] Some additional header extension support(SDES:MID/ABS send time/time offset/video orientation)
 - [x] Nack for outgoing RTP
-- [ ] Datachannels over SCTP
+- [x] Datachannels over SCTP (working partially, only data producer working.
+      This is limited by pion webrtc API, can't do anything now.)
 - [ ] Simulcast (pion doesn't expose handler for unhandledSSRC)
-- [ ] RTX support for distinct ssrc for incoming RTP (pion limitation)[https://github.com/webrtc-rs/webrtc/issues/295] 
+- [ ] RTX support for distinct ssrc for incoming RTP (pion limitation)[https://github.com/webrtc-rs/webrtc/issues/295]
