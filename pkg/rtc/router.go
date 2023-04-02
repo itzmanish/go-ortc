@@ -17,6 +17,7 @@ import (
 // to and from consumer and producer respectively.
 type Router struct {
 	Id uint
+	logger.Logger
 
 	closed                     atomic.Bool
 	transports                 map[uint]*WebRTCTransport
@@ -47,6 +48,7 @@ func NewRouter(id uint, bff *buffer.Factory, config RouterConfig) *Router {
 		currentTransportId:         0,
 		bufferFactory:              bff,
 		capabilities:               DefaultRouterCapabilities(),
+		Logger:                     logger.NewLogger("Router").WithField("ID", id),
 	}
 }
 
@@ -113,24 +115,28 @@ func (router *Router) AddDataProducer(dp *DataProducer) {
 	router.dataProducers[dp.Id] = dp
 }
 
+func (router *Router) AddDataConsumer(dc *DataConsumer) {
+	router.dataConsumers[dc.Id] = dc
+}
+
 func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
 	return func(producerId uint, rtp *buffer.ExtPacket) {
-		// logger.Info("packet found now need to forward", producerId, rtp)
+		// router.Logger.Info("packet found now need to forward", producerId, rtp)
 		// here get the associated consumers for the producer id
 		consumersId, ok := router.producerIdToConsumerIdsMap[producerId]
 		if !ok {
-			logger.Warn("how come this producer entry is not in the map", producerId)
+			router.Logger.Warn("how come this producer entry is not in the map", producerId)
 			return
 		}
 		for _, cId := range consumersId {
 			consumer, ok := router.consumers[cId]
 			if !ok {
-				logger.Warn("consumer id not in the map", cId)
+				router.Logger.Warn("consumer id not in the map", cId)
 				return
 			}
 			err := consumer.Write(rtp)
 			if err != nil {
-				logger.Error("Writing rtp packet err:", err)
+				router.Logger.Error("Writing rtp packet err:", err)
 			}
 		}
 	}
@@ -138,13 +144,19 @@ func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
 
 func (router *Router) OnRTCPPacket() OnRTCPPacketHandlerFunc {
 	return func(producerId uint, rtcp []rtcp.Packet) {
-		logger.Info("rtcp packet found on producer", producerId, rtcp)
+		router.Logger.Info("rtcp packet found on producer", producerId, rtcp)
 		// if required forward or do any operation on the packet
 	}
 }
 
 func (router *Router) OnDataChannelMessage(dataProducerId uint, message webrtc.DataChannelMessage) {
-	logger.Info("got dc message", dataProducerId, message)
+	router.Logger.Info("got dc message", dataProducerId, message)
+	for _, dc := range router.dataConsumers {
+		err := dc.Send(message.Data)
+		if err != nil {
+			router.Logger.Error("unable to forward data channel message to", dc.Id)
+		}
+	}
 }
 
 func (router *Router) generateNewWebrtcTransportID() uint {

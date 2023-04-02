@@ -257,6 +257,37 @@ func (r *Room) HandleIncomingMessage(peer *Peer, msg *WebSocketMessage, cb func(
 			cb(BuildMessage(resp))
 			break
 		}
+	case ConsumeData:
+		{
+			var payload struct {
+				ProducerID uint `json:"producerId"`
+			}
+			err := json.Unmarshal([]byte(msg.Payload), &payload)
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			dc, err := peer.ConsumeData(payload.ProducerID)
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			peer.dataConsumers[dc.Id] = dc
+			resp := struct {
+				ConsumerId          string                   `json:"id"`
+				ProducerId          string                   `json:"producerId"`
+				Label               string                   `json:"label"`
+				SctpStreamParameter rtc.SCTPStreamParameters `json:"sctpStreamParameters"`
+			}{
+				ConsumerId:          strconv.FormatUint(uint64(dc.Id), 10),
+				ProducerId:          strconv.FormatUint(uint64(payload.ProducerID), 10),
+				Label:               dc.Label(),
+				SctpStreamParameter: dc.GetParameters(),
+			}
+
+			cb(BuildMessage(resp))
+			break
+		}
 	case ConsumerResume:
 		{
 			var payload struct {

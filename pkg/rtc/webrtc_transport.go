@@ -277,6 +277,30 @@ func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, erro
 	return consumer, err
 }
 
+func (t *WebRTCTransport) ConsumeData(dataProducerId uint) (*DataConsumer, error) {
+	dp, ok := t.router.dataProducers[dataProducerId]
+	if !ok {
+		return nil, fmt.Errorf("data producer not found, id: %v", dataProducerId)
+	}
+	dataChannel, err := t.api.NewDataChannel(t.sctpConn, &webrtc.DataChannelParameters{
+		Label:             dp.label,
+		Ordered:           dp.params.Ordered,
+		Negotiated:        false,
+		MaxPacketLifeTime: dp.channel.MaxPacketLifeTime(),
+		MaxRetransmits:    dp.channel.MaxRetransmits(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	dc := NewDataConsumer(t.getNextId(DataConsumerID), t.sctpConn.GetCapabilities().MaxMessageSize, dataChannel)
+	if t.IsConnected() {
+		dc.SetTranportConnected(true)
+	}
+	t.router.AddDataConsumer(dc)
+	t.dataConsumers[dc.Id] = dc
+	return dc, nil
+}
+
 func (t *WebRTCTransport) WriteRTCP(pkts []rtcp.Packet) (int, error) {
 	return t.dtlsConn.WriteRTCP(pkts)
 }

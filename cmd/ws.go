@@ -27,6 +27,7 @@ const (
 	ProducerToggle
 	CloseProducer
 	Consume
+	ConsumeData
 	ConsumerResume
 	ConsumerPause
 
