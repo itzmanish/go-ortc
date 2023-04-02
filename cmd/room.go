@@ -173,6 +173,29 @@ func (r *Room) HandleIncomingMessage(peer *Peer, msg *WebSocketMessage, cb func(
 			}))
 			break
 		}
+	case ProduceData:
+		{
+			var payload struct {
+				Label  string                   `json:"label"`
+				Params rtc.SCTPStreamParameters `json:"sctpStreamParameters"`
+			}
+			err := json.Unmarshal([]byte(msg.Payload), &payload)
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			producer, err := peer.ProduceData(payload.Label, payload.Params)
+			if err != nil {
+				cb(nil, err)
+				return
+			}
+			cb(BuildMessage(struct {
+				ProducerID uint `json:"id"`
+			}{
+				ProducerID: producer.Id,
+			}))
+			break
+		}
 	case CloseProducer:
 		{
 

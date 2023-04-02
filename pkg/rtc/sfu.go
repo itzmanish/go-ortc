@@ -9,6 +9,7 @@ import (
 	"github.com/itzmanish/go-ortc/pkg/buffer"
 )
 
+type IDType uint8
 type SFU struct {
 	PID uint
 
@@ -25,6 +26,14 @@ var (
 // MID header extension max length (just used when setting/updating MID
 // extension).
 const MidMaxLength = uint8(8)
+
+const (
+	RTPProducerID IDType = iota + 1
+	DataProducerID
+	RTPConsumerID
+	DataConsumerID
+	MidID
+)
 
 func init() {
 	// Init packet factory

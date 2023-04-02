@@ -9,21 +9,23 @@ import (
 )
 
 type Peer struct {
-	Id         uint
-	closed     bool
-	router     *rtc.Router
-	transports map[uint]*rtc.WebRTCTransport
-	producers  map[uint]*rtc.Producer
-	consumers  map[uint]*rtc.Consumer
+	Id            uint
+	closed        bool
+	router        *rtc.Router
+	transports    map[uint]*rtc.WebRTCTransport
+	producers     map[uint]*rtc.Producer
+	dataProducers map[uint]*rtc.DataProducer
+	consumers     map[uint]*rtc.Consumer
 }
 
 func NewPeer(id uint, router *rtc.Router) *Peer {
 	return &Peer{
-		Id:         id,
-		router:     router,
-		transports: make(map[uint]*rtc.WebRTCTransport),
-		producers:  make(map[uint]*rtc.Producer),
-		consumers:  make(map[uint]*rtc.Consumer),
+		Id:            id,
+		router:        router,
+		transports:    make(map[uint]*rtc.WebRTCTransport),
+		producers:     make(map[uint]*rtc.Producer),
+		dataProducers: make(map[uint]*rtc.DataProducer),
+		consumers:     make(map[uint]*rtc.Consumer),
 	}
 }
 
@@ -110,4 +112,13 @@ func (p *Peer) Consume(producer *rtc.Producer, paused bool) (*rtc.Consumer, erro
 		return nil, fmt.Errorf("consuming transport not found")
 	}
 	return transport.Consume(producer.Id, paused)
+}
+
+func (p *Peer) ProduceData(label string, params rtc.SCTPStreamParameters) (*rtc.DataProducer, error) {
+	logger.Info("Producing data", label, "params", params)
+	transport := p.GetProducingTransport()
+	if transport == nil {
+		return nil, fmt.Errorf("producing transport not found")
+	}
+	return transport.ProduceData(label, params)
 }

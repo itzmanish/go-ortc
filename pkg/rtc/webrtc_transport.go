@@ -1,6 +1,7 @@
 package rtc
 
 import (
+	"fmt"
 	"math"
 	"sync"
 
@@ -17,23 +18,22 @@ import (
 type WebRTCTransport struct {
 	Id uint
 
-	lastProducerId uint
-	lastConsumerId uint
-	lastMid        uint8
-	closed         bool
-	closeOnce      sync.Once
-	connected      chan bool
+	closed    bool
+	closeOnce sync.Once
+	connected chan bool
 
-	producers map[uint]*Producer
-	consumers map[uint]*Consumer
+	idsMap              map[IDType]uint
+	producers           map[uint]*Producer
+	consumers           map[uint]*Consumer
+	dataProducers       map[uint]*DataProducer
+	dataConsumers       map[uint]*DataConsumer
+	pendingDataChannels map[uint]*webrtc.DataChannel
 
-	twcc             *twccManager.Responder
-	bwe              cc.BandwidthEstimator
-	router           *Router
-	iceGatherer      *webrtc.ICEGatherer
-	iceParams        webrtc.ICEParameters
-	sctpCapabilities webrtc.SCTPCapabilities
-	caps             TransportCapabilities
+	twcc        *twccManager.Responder
+	router      *Router
+	iceGatherer *webrtc.ICEGatherer
+	bwe         cc.BandwidthEstimator
+	caps        TransportCapabilities
 
 	me       *webrtc.MediaEngine
 	api      *webrtc.API
@@ -44,11 +44,17 @@ type WebRTCTransport struct {
 	Metadata map[string]any
 }
 
+type SCTPCapabilities struct {
+	webrtc.SCTPCapabilities
+	Port          uint `json:"port"`
+	IsDataChannel bool `json:"isDataChannel"`
+}
+
 type TransportCapabilities struct {
-	IceCandidates    []webrtc.ICECandidate   `json:"iceCandidates"`
-	IceParameters    webrtc.ICEParameters    `json:"iceParameters"`
-	DtlsParameters   webrtc.DTLSParameters   `json:"dtlsParameters"`
-	SCTPCapabilities webrtc.SCTPCapabilities `json:"sctpCapabilities"`
+	IceCandidates    []webrtc.ICECandidate `json:"iceCandidates"`
+	IceParameters    webrtc.ICEParameters  `json:"iceParameters"`
+	DtlsParameters   webrtc.DTLSParameters `json:"dtlsParameters"`
+	SCTPCapabilities SCTPCapabilities      `json:"sctpParameters"`
 }
 
 func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTransport, error) {
@@ -71,18 +77,22 @@ func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTranspo
 	sctp := api.NewSCTPTransport(dtls)
 
 	transport := &WebRTCTransport{
-		Id:          id,
-		router:      router,
-		iceGatherer: iceGatherer,
-		iceConn:     ice,
-		dtlsConn:    dtls,
-		sctpConn:    sctp,
-		api:         api,
-		me:          me,
-		closeOnce:   sync.Once{},
-		connected:   make(chan bool, 1),
-		producers:   make(map[uint]*Producer),
-		consumers:   make(map[uint]*Consumer),
+		Id:                  id,
+		router:              router,
+		iceGatherer:         iceGatherer,
+		iceConn:             ice,
+		dtlsConn:            dtls,
+		sctpConn:            sctp,
+		api:                 api,
+		me:                  me,
+		closeOnce:           sync.Once{},
+		connected:           make(chan bool, 1),
+		producers:           make(map[uint]*Producer),
+		consumers:           make(map[uint]*Consumer),
+		dataProducers:       make(map[uint]*DataProducer),
+		dataConsumers:       make(map[uint]*DataConsumer),
+		pendingDataChannels: make(map[uint]*webrtc.DataChannel),
+		idsMap:              make(map[IDType]uint),
 	}
 
 	caps, err := transport.generateCapabilitites()
@@ -117,11 +127,11 @@ func (t *WebRTCTransport) Connect(dtlsParams webrtc.DTLSParameters, iceParams we
 		return err
 	}
 
-	// err = t.sctpConn.Start(t.sctpCapabilities)
-	// if err != nil {
-	// 	multierror.Append(err, t.iceConn.Stop(), t.dtlsConn.Stop())
-	// 	return err
-	// }
+	err = t.sctpConn.Start(webrtc.SCTPCapabilities{})
+	if err != nil {
+		multierror.Append(err, t.iceConn.Stop(), t.dtlsConn.Stop())
+		return err
+	}
 
 	return nil
 }
@@ -181,7 +191,7 @@ func (t *WebRTCTransport) Produce(kind MediaKind, parameters RTPReceiveParameter
 			}
 		})
 	}
-	producer := newProducer(t.getNextProducerId(), receiver, t, parameters)
+	producer := newProducer(t.getNextId(RTPProducerID), receiver, t, parameters)
 
 	err = t.router.AddProducer(producer)
 	if err != nil {
@@ -193,7 +203,25 @@ func (t *WebRTCTransport) Produce(kind MediaKind, parameters RTPReceiveParameter
 	t.producers[producer.Id] = producer
 
 	return producer, nil
+}
 
+func (t *WebRTCTransport) ProduceData(label string, parameters SCTPStreamParameters) (*DataProducer, error) {
+	_, ok := t.dataProducers[parameters.StreamID]
+	if ok {
+		return nil, fmt.Errorf("data producer already exists for this stream id")
+	}
+	dc, ok := t.pendingDataChannels[parameters.StreamID]
+	if !ok {
+		return nil, fmt.Errorf("data channel doesn't exists for data producer")
+	}
+	dp := NewDataProducer(t.getNextId(DataProducerID), label, parameters)
+	dp.SetDataChannel(dc)
+	dp.OnMessage(func(dcm webrtc.DataChannelMessage) {
+		t.router.OnDataChannelMessage(dp.Id, dcm)
+	})
+	t.router.AddDataProducer(dp)
+	t.dataProducers[parameters.StreamID] = dp
+	return dp, nil
 }
 
 func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, error) {
@@ -222,7 +250,7 @@ func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, erro
 		t.bwe = bwe
 	}
 	dt, err := NewDownTrack(
-		t.getMid(),
+		t.getNextId(MidID),
 		producer.track.Codec().RTPCodecCapability,
 		producer, t.router.bufferFactory,
 		500,
@@ -237,7 +265,7 @@ func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, erro
 			logger.Error("Error on processing incoming tcc packet", err)
 		}
 	})
-	consumer, err := newConsumer(t.getNextConsumerId(), producer, dt, t, paused)
+	consumer, err := newConsumer(t.getNextId(RTPConsumerID), producer, dt, t, paused)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +311,6 @@ func (t *WebRTCTransport) generateCapabilitites() (TransportCapabilities, error)
 	// pion webrtc is not using agent's ice-lite settings on the
 	// GetLocalParameters() response. So I am manully overriding it here
 	iceParams.ICELite = true
-	t.iceParams = iceParams
 
 	dtlsParams, err := t.dtlsConn.GetLocalParameters()
 	if err != nil {
@@ -291,13 +318,16 @@ func (t *WebRTCTransport) generateCapabilitites() (TransportCapabilities, error)
 	}
 
 	sctpCapabilities := t.sctpConn.GetCapabilities()
-	t.sctpCapabilities = sctpCapabilities
 
 	return TransportCapabilities{
-		IceCandidates:    iceCandidates,
-		IceParameters:    iceParams,
-		DtlsParameters:   dtlsParams,
-		SCTPCapabilities: sctpCapabilities,
+		IceCandidates:  iceCandidates,
+		IceParameters:  iceParams,
+		DtlsParameters: dtlsParams,
+		SCTPCapabilities: SCTPCapabilities{
+			SCTPCapabilities: sctpCapabilities,
+			Port:             5000,
+			IsDataChannel:    true,
+		},
 	}, nil
 }
 
@@ -316,30 +346,42 @@ func (t *WebRTCTransport) addListeners() {
 	t.dtlsConn.OnStateChange(func(ds webrtc.DTLSTransportState) {
 		logger.Info("dtls state changed", ds)
 	})
+
+	t.sctpConn.OnDataChannel(func(dc *webrtc.DataChannel) {
+		logger.Info("data channel found", dc)
+		for _, dp := range t.dataProducers {
+			if dp.params.StreamID == uint(*dc.ID()) {
+				dp.SetDataChannel(dc)
+				return
+			}
+		}
+		logger.Warn("no existing data producer found for associated datachannel")
+		t.pendingDataChannels[uint(*dc.ID())] = dc
+	})
 }
 
-func (t *WebRTCTransport) getNextProducerId() uint {
-	if t.lastProducerId == math.MaxUint16 {
-		panic("Why the hell the id is still uint16!")
+func (t *WebRTCTransport) getNextId(idtype IDType) uint {
+	lastID, ok := t.idsMap[idtype]
+	switch idtype {
+	case RTPProducerID,
+		DataProducerID,
+		RTPConsumerID,
+		DataConsumerID:
+		if !ok {
+			lastID = 1
+		} else {
+			if lastID == math.MaxUint {
+				panic("Why the hell the id is still uint16!")
+			}
+			lastID += 1
+		}
+	case MidID:
+		if !ok {
+			lastID = 0
+		} else {
+			lastID += 1
+		}
 	}
-	t.lastProducerId += 1
-	return t.lastProducerId
-}
-
-func (t *WebRTCTransport) getNextConsumerId() uint {
-	if t.lastConsumerId == math.MaxUint16 {
-		panic("Why the hell the id is still uint16!")
-	}
-	t.lastConsumerId += 1
-	return t.lastConsumerId
-}
-
-func (t *WebRTCTransport) getMid() uint8 {
-	if t.lastMid == math.MaxUint8 {
-		panic("are you crazy? How can you create this much of consumers on a transport!")
-	}
-	defer func() {
-		t.lastMid += 1
-	}()
-	return t.lastMid
+	t.idsMap[idtype] = lastID
+	return lastID
 }

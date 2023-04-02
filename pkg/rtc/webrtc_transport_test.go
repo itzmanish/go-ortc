@@ -49,10 +49,12 @@ func transportConnectHelper(t assert.TestingT, useLocalBuffer bool, publisher bo
 
 	go func() {
 		err = client.setSignal(&testORTCSignal{
-			DTLSParameters:   caps1.DtlsParameters,
-			ICECandidates:    caps1.IceCandidates,
-			ICEParameters:    caps1.IceParameters,
-			SCTPCapabilities: caps1.SCTPCapabilities,
+			DTLSParameters: caps1.DtlsParameters,
+			ICECandidates:  caps1.IceCandidates,
+			ICEParameters:  caps1.IceParameters,
+			SCTPCapabilities: webrtc.SCTPCapabilities{
+				MaxMessageSize: caps1.SCTPCapabilities.MaxMessageSize,
+			},
 		}, true)
 		errCh <- err
 	}()

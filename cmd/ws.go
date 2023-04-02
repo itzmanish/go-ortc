@@ -23,6 +23,7 @@ const (
 	CloseTransport
 	ConnectTransport
 	Produce
+	ProduceData
 	ProducerToggle
 	CloseProducer
 	Consume

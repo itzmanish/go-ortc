@@ -63,7 +63,7 @@ type DownTrack struct {
 }
 
 // NewDownTrack returns a DownTrack.
-func NewDownTrack(mid uint8, c webrtc.RTPCodecCapability, producer *Producer, bf *buffer.Factory, mt int) (*DownTrack, error) {
+func NewDownTrack(mid uint, c webrtc.RTPCodecCapability, producer *Producer, bf *buffer.Factory, mt int) (*DownTrack, error) {
 	id := GenerateRandomString(10)
 	d := &DownTrack{
 		id:            id,

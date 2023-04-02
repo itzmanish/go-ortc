@@ -8,6 +8,7 @@ import (
 	"github.com/itzmanish/go-ortc/pkg/logger"
 	"github.com/itzmanish/go-ortc/pkg/saver"
 	"github.com/pion/rtcp"
+	"github.com/pion/webrtc/v3"
 	"go.uber.org/atomic"
 )
 
@@ -21,6 +22,8 @@ type Router struct {
 	transports                 map[uint]*WebRTCTransport
 	producers                  map[uint]*Producer
 	consumers                  map[uint]*Consumer
+	dataProducers              map[uint]*DataProducer
+	dataConsumers              map[uint]*DataConsumer
 	producerIdToConsumerIdsMap map[uint][]uint
 	bufferFactory              *buffer.Factory
 	rtcpCh                     chan []rtcp.Packet
@@ -38,6 +41,8 @@ func NewRouter(id uint, bff *buffer.Factory, config RouterConfig) *Router {
 		transports:                 map[uint]*WebRTCTransport{},
 		producers:                  map[uint]*Producer{},
 		consumers:                  map[uint]*Consumer{},
+		dataProducers:              map[uint]*DataProducer{},
+		dataConsumers:              map[uint]*DataConsumer{},
 		producerIdToConsumerIdsMap: map[uint][]uint{},
 		currentTransportId:         0,
 		bufferFactory:              bff,
@@ -104,6 +109,10 @@ func (router *Router) AddConsumer(consumer *Consumer) error {
 	return nil
 }
 
+func (router *Router) AddDataProducer(dp *DataProducer) {
+	router.dataProducers[dp.Id] = dp
+}
+
 func (router *Router) OnRTPPacket() OnRTPPacketHandlerFunc {
 	return func(producerId uint, rtp *buffer.ExtPacket) {
 		// logger.Info("packet found now need to forward", producerId, rtp)
@@ -132,6 +141,10 @@ func (router *Router) OnRTCPPacket() OnRTCPPacketHandlerFunc {
 		logger.Info("rtcp packet found on producer", producerId, rtcp)
 		// if required forward or do any operation on the packet
 	}
+}
+
+func (router *Router) OnDataChannelMessage(dataProducerId uint, message webrtc.DataChannelMessage) {
+	logger.Info("got dc message", dataProducerId, message)
 }
 
 func (router *Router) generateNewWebrtcTransportID() uint {
