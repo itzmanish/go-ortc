@@ -5,9 +5,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/pion/webrtc/v3"
 )
+
+type SSRC uint32
+type PayloadType uint8
 
 type RTPReceiveParameters struct {
 	RTPParameters
@@ -32,6 +35,10 @@ type RTCPParameters struct {
 	Mux         bool   `json:"mux"`
 }
 
+type RTPRtxParameters struct {
+	SSRC SSRC `json:"ssrc"`
+}
+
 type RTPCodecParameters struct {
 	// https://draft.ortc.org/#dom-rtcrtpcodecparameters
 	MimeType     string                 `json:"mimeType"`
@@ -43,6 +50,7 @@ type RTPCodecParameters struct {
 	RTCPFeedback []RTCPFeedback         `json:"rtcpFeedback"`
 	Parameters   map[string]interface{} `json:"parameters"`
 }
+
 type RTCPFeedback struct {
 	Type      string `json:"type"`
 	Parameter string `json:"parameter"`
@@ -71,19 +79,19 @@ type RTPDecodingParameters struct {
 	RTPCodingParameters
 }
 type RTPCodingParameters struct {
-	Ssrc                  webrtc.SSRC              `json:"ssrc"`
-	CodecPayloadType      webrtc.PayloadType       `json:"codecPayloadType,omitempty"`
-	Fec                   *RTPFecParameters        `json:"fec,omitempty"`
-	Rtx                   *webrtc.RTPRtxParameters `json:"rtx,omitempty"`
-	Active                bool                     `json:"active,omitempty"`
-	Rid                   string                   `json:"rid,omitempty"`
-	EncodingId            string                   `json:"encodingId,omitempty"`
-	DependencyEncodingIds []string                 `json:"dependencyEncodingIds,omitempty"`
+	Ssrc                  webrtc.SSRC        `json:"ssrc"`
+	CodecPayloadType      webrtc.PayloadType `json:"codecPayloadType,omitempty"`
+	Fec                   *RTPFecParameters  `json:"fec,omitempty"`
+	Rtx                   RTPRtxParameters   `json:"rtx,omitempty"`
+	Active                bool               `json:"active,omitempty"`
+	Rid                   string             `json:"rid,omitempty"`
+	EncodingId            string             `json:"encodingId,omitempty"`
+	DependencyEncodingIds []string           `json:"dependencyEncodingIds,omitempty"`
 }
 
 type RTPFecParameters struct {
-	Ssrc      webrtc.SSRC `json:"ssrc,omitempty"`
-	Mechanism string      `json:"mechanism,omitempty"`
+	Ssrc      SSRC   `json:"ssrc,omitempty"`
+	Mechanism string `json:"mechanism,omitempty"`
 }
 type RTPCapabilities struct {
 	Codecs           []RTPCodecCapability `json:"codecs"`
@@ -91,7 +99,6 @@ type RTPCapabilities struct {
 }
 
 type RTPCodecCapability struct {
-	// webrtc.RTPCodecCapability
 	MimeType             string         `json:"mimeType"`
 	PreferredPayloadType uint8          `json:"preferredPayloadType"`
 	ClockRate            uint32         `json:"clockRate"`
@@ -113,7 +120,7 @@ type RTPHeaderExtension struct {
 	PreferredEncrypt bool   `json:"preferredEncrypt"`
 }
 
-type MediaKind webrtc.RTPCodecType
+type MediaKind uint8
 
 const (
 	AudioMediaKind = iota + 1

@@ -3,7 +3,7 @@ package rtc
 import (
 	"fmt"
 
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/pion/webrtc/v3"
 )
 

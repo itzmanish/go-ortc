@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/itzmanish/go-ortc/pkg/buffer"
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/buffer"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/livekit/mediatransportutil/pkg/bucket"
 	"github.com/pion/webrtc/v3"
 	"github.com/pion/webrtc/v3/pkg/media"

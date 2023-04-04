@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/itzmanish/go-ortc/pkg/logger"
-	"github.com/itzmanish/go-ortc/pkg/rtc"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/rtc"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )

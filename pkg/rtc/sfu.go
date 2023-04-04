@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/itzmanish/go-ortc/pkg/buffer"
+	"github.com/itzmanish/go-ortc/v2/pkg/buffer"
 )
 
 type IDType uint8

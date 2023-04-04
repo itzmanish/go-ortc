@@ -3,7 +3,7 @@ package buffer
 import (
 	"testing"
 
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/require"
 )

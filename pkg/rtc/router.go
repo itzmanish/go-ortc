@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/itzmanish/go-ortc/pkg/buffer"
-	"github.com/itzmanish/go-ortc/pkg/logger"
-	"github.com/itzmanish/go-ortc/pkg/saver"
+	"github.com/itzmanish/go-ortc/v2/pkg/buffer"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/saver"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/atomic"

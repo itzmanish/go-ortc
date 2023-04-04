@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 
 	twccManager "github.com/livekit/mediatransportutil/pkg/twcc"
 	"github.com/pion/interceptor/pkg/cc"

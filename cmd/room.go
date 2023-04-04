@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/itzmanish/go-ortc/pkg/logger"
-	"github.com/itzmanish/go-ortc/pkg/rtc"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/rtc"
 	"github.com/pion/webrtc/v3"
 )
 

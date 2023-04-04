@@ -1,4 +1,4 @@
-module github.com/itzmanish/go-ortc
+module github.com/itzmanish/go-ortc/v2
 
 go 1.18
 

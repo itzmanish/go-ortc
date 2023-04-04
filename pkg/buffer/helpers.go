@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 )
 
 var (

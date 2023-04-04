@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/itzmanish/go-ortc/pkg/buffer"
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/buffer"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/livekit/mediatransportutil/pkg/bucket"
 	"github.com/livekit/mediatransportutil/pkg/twcc"
 	"github.com/pion/rtcp"

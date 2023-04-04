@@ -3,7 +3,7 @@ package rtc
 import (
 	"os"
 
-	"github.com/itzmanish/go-ortc/pkg/buffer"
+	"github.com/itzmanish/go-ortc/v2/pkg/buffer"
 	"github.com/pion/logging"
 	"github.com/pion/webrtc/v3"
 )

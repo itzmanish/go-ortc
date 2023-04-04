@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gammazero/deque"
-	"github.com/itzmanish/go-ortc/pkg/audio"
-	"github.com/itzmanish/go-ortc/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/audio"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/sdp/v3"

@@ -1,7 +1,7 @@
 package testutils
 
 import (
-	"github.com/itzmanish/go-ortc/pkg/buffer"
+	"github.com/itzmanish/go-ortc/v2/pkg/buffer"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 )
