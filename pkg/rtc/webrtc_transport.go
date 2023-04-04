@@ -10,7 +10,6 @@ import (
 
 	twccManager "github.com/livekit/mediatransportutil/pkg/twcc"
 	"github.com/pion/interceptor/pkg/cc"
-	"github.com/pion/interceptor/pkg/gcc"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
@@ -58,51 +57,7 @@ type TransportCapabilities struct {
 }
 
 func newWebRTCTransport(id uint, router *Router, publisher bool) (*WebRTCTransport, error) {
-	me := &webrtc.MediaEngine{}
-	se := router.config.transportConfig.se
-
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se))
-	iceGatherer, err := api.NewICEGatherer(webrtc.ICEGatherOptions{
-		ICEGatherPolicy: webrtc.ICETransportPolicyAll,
-	})
-	if err != nil {
-		return nil, err
-	}
-	ice := api.NewICETransport(iceGatherer)
-	dtls, err := api.NewDTLSTransport(ice, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	sctp := api.NewSCTPTransport(dtls)
-
-	transport := &WebRTCTransport{
-		Id:                  id,
-		router:              router,
-		iceGatherer:         iceGatherer,
-		iceConn:             ice,
-		dtlsConn:            dtls,
-		sctpConn:            sctp,
-		api:                 api,
-		me:                  me,
-		closeOnce:           sync.Once{},
-		connected:           make(chan bool, 1),
-		producers:           make(map[uint]*Producer),
-		consumers:           make(map[uint]*Consumer),
-		dataProducers:       make(map[uint]*DataProducer),
-		dataConsumers:       make(map[uint]*DataConsumer),
-		pendingDataChannels: make(map[uint]*webrtc.DataChannel),
-		idsMap:              make(map[IDType]uint),
-	}
-
-	caps, err := transport.generateCapabilitites()
-	if err != nil {
-		return nil, err
-	}
-	transport.caps = caps
-	transport.addListeners()
-
-	return transport, nil
+	return nil, nil
 }
 
 func (t *WebRTCTransport) GetCapabilities() TransportCapabilities {
@@ -114,24 +69,6 @@ func (t *WebRTCTransport) IsConnected() bool {
 }
 
 func (t *WebRTCTransport) Connect(dtlsParams webrtc.DTLSParameters, iceParams webrtc.ICEParameters) error {
-	iceRole := webrtc.ICERoleControlled
-
-	err := t.iceConn.Start(nil, iceParams, &iceRole)
-	if err != nil {
-		return err
-	}
-
-	err = t.dtlsConn.Start(dtlsParams)
-	if err != nil {
-		multierror.Append(err, t.iceConn.Stop())
-		return err
-	}
-
-	err = t.sctpConn.Start(webrtc.SCTPCapabilities{})
-	if err != nil {
-		multierror.Append(err, t.iceConn.Stop(), t.dtlsConn.Stop())
-		return err
-	}
 
 	return nil
 }
@@ -159,50 +96,7 @@ func (t *WebRTCTransport) Stop() error {
 }
 
 func (t *WebRTCTransport) Produce(kind MediaKind, parameters RTPReceiveParameters) (*Producer, error) {
-	err := SetupProducerMediaEngineForKind(t.me, kind)
-	if err != nil {
-		return nil, err
-	}
-	receiver, err := t.api.NewRTPReceiver(webrtc.RTPCodecType(kind), t.dtlsConn)
-	if err != nil {
-		return nil, errReceiverNotCreated(err)
-	}
-
-	params := ParseRTPReciveParametersFromORTC(parameters)
-	err = receiver.Receive(params)
-	if err != nil {
-		return nil, errSettingReceiverParameters(err)
-	}
-	validParams := ParseRTPParametersFromORTC(RTPParameters{
-		HeaderExtensions: parameters.HeaderExtensions,
-		Codecs:           parameters.Codecs,
-		Mid:              parameters.Mid,
-		Rtcp:             parameters.Rtcp,
-	})
-	receiver.SetRTPParameters(RemoveRTXCodecsFromRTPParameters(validParams))
-	if t.twcc == nil {
-		ssrc := receiver.Track().SSRC()
-		t.twcc = twccManager.NewTransportWideCCResponder(uint32(ssrc))
-		t.twcc.OnFeedback(func(pkt rtcp.RawPacket) {
-			logger.Debugf("TRANSPORT::TWCC::OnFeedback() sending packet: %+v", pkt)
-			_, err := t.WriteRTCP([]rtcp.Packet{&pkt})
-			if err != nil {
-				logger.Error("error on writing TWCC feedback packet", err)
-			}
-		})
-	}
-	producer := newProducer(t.getNextId(RTPProducerID), receiver, t, parameters)
-
-	err = t.router.AddProducer(producer)
-	if err != nil {
-		return nil, err
-	}
-
-	go producer.readRTPWorker()
-
-	t.producers[producer.Id] = producer
-
-	return producer, nil
+	return nil, nil
 }
 
 func (t *WebRTCTransport) ProduceData(label string, parameters SCTPStreamParameters) (*DataProducer, error) {
@@ -225,56 +119,7 @@ func (t *WebRTCTransport) ProduceData(label string, parameters SCTPStreamParamet
 }
 
 func (t *WebRTCTransport) Consume(producerId uint, paused bool) (*Consumer, error) {
-	producer, ok := t.router.producers[producerId]
-	if !ok {
-		return nil, errProducerNotFound(producerId)
-	}
-	err := SetupConsumerMediaEngineWithProducerParams(t.me,
-		ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)),
-		webrtc.RTPCodecType(producer.kind),
-	)
-	if err != nil {
-		return nil, err
-	}
-	if t.bwe == nil {
-		bwe, err := gcc.NewSendSideBWE(
-			gcc.SendSideBWEInitialBitrate(2*1000*1000),
-			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()),
-		)
-		if err != nil {
-			return nil, err
-		}
-		bwe.OnTargetBitrateChange(func(bitrate int) {
-			logger.Info("bitrate changed", bitrate)
-		})
-		t.bwe = bwe
-	}
-	dt, err := NewDownTrack(
-		t.getNextId(MidID),
-		producer.track.Codec().RTPCodecCapability,
-		producer, t.router.bufferFactory,
-		500,
-	)
-	if err != nil {
-		return nil, errFailedToCreateDownTrack(err)
-	}
-	dt.OnTransportCCFeedback(func(tlc *rtcp.TransportLayerCC) {
-		logger.Debug("sending transport cc to evaluate", tlc)
-		err := t.bwe.WriteRTCP([]rtcp.Packet{tlc}, nil)
-		if err != nil {
-			logger.Error("Error on processing incoming tcc packet", err)
-		}
-	})
-	consumer, err := newConsumer(t.getNextId(RTPConsumerID), producer, dt, t, paused)
-	if err != nil {
-		return nil, err
-	}
-	err = t.router.AddConsumer(consumer)
-	t.consumers[consumer.Id] = consumer
-	dt.OnCloseHandler(func() {
-		consumer.Close()
-	})
-	return consumer, err
+	return nil, nil
 }
 
 func (t *WebRTCTransport) ConsumeData(dataProducerId uint) (*DataConsumer, error) {

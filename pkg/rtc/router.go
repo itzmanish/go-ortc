@@ -80,20 +80,6 @@ func (router *Router) NewWebRTCTransport(metadata map[string]any) (*WebRTCTransp
 }
 
 func (router *Router) AddProducer(producer *Producer) error {
-	track := producer.receiver.Track()
-	buff, rtcpReader := router.bufferFactory.GetBufferPair(uint32(track.SSRC()))
-	if buff == nil || rtcpReader == nil {
-		return fmt.Errorf("router.AddProducer(): buff is nil")
-	}
-	buff.OnRtcpFeedback(producer.SendRTCP)
-	rtcpReader.OnPacket(producer.handleRTCP)
-	buff.SetTWCC(producer.twcc)
-
-	buff.Bind(ParseRTPParametersFromORTC(ConvertRTPRecieveParametersToRTPParamters(producer.parameters)))
-
-	producer.buffer = buff
-	producer.OnRTP(router.OnRTPPacket())
-	producer.OnRTCP(router.OnRTCPPacket())
 	router.producers[producer.Id] = producer
 	router.producerIdToConsumerIdsMap[producer.Id] = []uint{}
 	return nil

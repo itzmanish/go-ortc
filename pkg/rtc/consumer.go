@@ -8,7 +8,6 @@ import (
 	"github.com/itzmanish/go-ortc/v2/pkg/buffer"
 	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/pion/rtcp"
-	"github.com/pion/webrtc/v3"
 	"go.uber.org/atomic"
 )
 
@@ -28,39 +27,37 @@ type Consumer struct {
 	parameters RTPSendParameters
 	track      *DownTrack
 	producer   *Producer
-	sender     *webrtc.RTPSender
+	sender     *RTPStreamSender
 	transport  *WebRTCTransport
 
 	onRTPPacket func(id uint, packet *buffer.ExtPacket)
 }
 
 func newConsumer(id uint, producer *Producer, track *DownTrack, transport *WebRTCTransport, paused bool) (*Consumer, error) {
-	sender, err := transport.api.NewRTPSender(track, transport.dtlsConn)
-	if err != nil {
-		return nil, errFailedToCreateConsumer(err)
-	}
+	// sender, err := transport.api.NewRTPSender(track, transport.dtlsConn)
+	// if err != nil {
+	// 	return nil, errFailedToCreateConsumer(err)
+	// }
 
-	parameters := sender.GetParameters()
-	err = sender.Send(parameters)
-	if err != nil {
-		return nil, err
-	}
-	ortcParams := ParseRTPSendParametersToORTC(parameters)
-	ortcParams.Rtcp = RTCPParameters{
-		Cname:       track.StreamID(),
-		Mux:         true,
-		ReducedSize: true,
-	}
-	ortcParams.Mid = track.Mid()
+	// parameters := sender.GetParameters()
+	// err = sender.Send(parameters)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// ortcParams := ParseRTPSendParametersToORTC(parameters)
+	// ortcParams.Rtcp = RTCPParameters{
+	// 	Cname:       track.StreamID(),
+	// 	Mux:         true,
+	// 	ReducedSize: true,
+	// }
+	// ortcParams.Mid = track.Mid()
 	consumer := &Consumer{
 		Id:          id,
 		producer:    producer,
-		sender:      sender,
 		transport:   transport,
 		track:       track,
 		kind:        producer.kind,
 		paused:      *atomic.NewBool(paused),
-		parameters:  ortcParams,
 		closed:      *atomic.NewBool(false),
 		closeCh:     make(chan bool),
 		onRTPPacket: nil,
@@ -120,7 +117,7 @@ func (c *Consumer) handleREMB(pkt *rtcp.ReceiverEstimatedMaximumBitrate) {
 }
 
 func (c *Consumer) rtcpReadWorker() {
-	rtcpBuf := make([]byte, 1500)
+	// rtcpBuf := make([]byte, 1500)
 	for {
 		select {
 		case <-c.closeCh:
@@ -129,10 +126,10 @@ func (c *Consumer) rtcpReadWorker() {
 		default:
 			// NOTE: I hate this but for some reason if we don't keep doing sender.Read()
 			// then you won't get any data on rtcp buffer reader.
-			_, _, rtcpErr := c.sender.Read(rtcpBuf)
-			if rtcpErr != nil {
-				return
-			}
+			// _, _, rtcpErr := c.sender.Read(rtcpBuf)
+			// if rtcpErr != nil {
+			// return
+			// }
 		}
 	}
 }
