@@ -13,7 +13,7 @@ type RouterConfig struct {
 }
 type WebRTCConfig struct {
 	me webrtc.MediaEngine
-	se webrtc.SettingEngine
+	se SettingEngine
 }
 type SFUConfig struct {
 	bufferFactory *buffer.Factory
@@ -22,7 +22,7 @@ type SFUConfig struct {
 
 func NewSFUConfig(bff *buffer.Factory) (*SFUConfig, error) {
 	me := webrtc.MediaEngine{}
-	se := webrtc.SettingEngine{
+	se := SettingEngine{
 		LoggerFactory: &logging.DefaultLoggerFactory{
 			Writer:          os.Stdout,
 			DefaultLogLevel: logging.LogLevelDebug,
