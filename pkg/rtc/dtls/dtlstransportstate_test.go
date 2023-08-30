@@ -1,4 +1,4 @@
-package rtc
+package dtls
 
 import (
 	"testing"
@@ -11,7 +11,7 @@ func TestNewDTLSTransportState(t *testing.T) {
 		stateString   string
 		expectedState DTLSTransportState
 	}{
-		{unknownStr, DTLSTransportState(Unknown)},
+		{"unknown", DTLSTransportState(Unknown)},
 		{"new", DTLSTransportStateNew},
 		{"connecting", DTLSTransportStateConnecting},
 		{"connected", DTLSTransportStateConnected},
@@ -33,7 +33,7 @@ func TestDTLSTransportState_String(t *testing.T) {
 		state          DTLSTransportState
 		expectedString string
 	}{
-		{DTLSTransportState(Unknown), unknownStr},
+		{DTLSTransportState(Unknown), "unknown"},
 		{DTLSTransportStateNew, "new"},
 		{DTLSTransportStateConnecting, "connecting"},
 		{DTLSTransportStateConnected, "connected"},

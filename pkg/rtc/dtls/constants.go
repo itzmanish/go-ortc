@@ -1,4 +1,4 @@
-package rtc
+package dtls
 
 import "github.com/pion/dtls/v2"
 

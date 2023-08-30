@@ -1,4 +1,4 @@
-package rtc
+package dtls
 
 // DTLSTransportState indicates the DTLS transport establishment state.
 type DTLSTransportState int

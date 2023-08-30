@@ -5,7 +5,8 @@ import (
 
 	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/itzmanish/go-ortc/v2/pkg/rtc"
-	"github.com/pion/webrtc/v3"
+	"github.com/itzmanish/go-ortc/v2/pkg/rtc/dtls"
+	"github.com/itzmanish/go-ortc/v2/pkg/rtc/ice"
 )
 
 type Peer struct {
@@ -70,7 +71,7 @@ func (p *Peer) CreateTransport(consuming bool) (*rtc.WebRTCTransport, error) {
 	return transport, nil
 }
 
-func (p *Peer) ConnectTransport(id uint, dtlsParams webrtc.DTLSParameters, iceParams webrtc.ICEParameters) error {
+func (p *Peer) ConnectTransport(id uint, dtlsParams dtls.DTLSParameters, iceParams ice.ICEParameters) error {
 	transport := p.GetTransport(id)
 	if transport == nil {
 		return fmt.Errorf("transport not found: %v", id)
@@ -83,7 +84,8 @@ func (p *Peer) CloseTransport(id uint) error {
 	if transport == nil {
 		return fmt.Errorf("transport not found: %v", id)
 	}
-	return transport.Close()
+	transport.Close()
+	return nil
 }
 
 func (p *Peer) Produce(kind string, parameters rtc.RTPReceiveParameters) (*rtc.Producer, error) {

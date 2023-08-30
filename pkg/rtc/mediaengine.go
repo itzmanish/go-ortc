@@ -45,49 +45,60 @@ func SetupConsumerMediaEngineWithProducerParams(me *webrtc.MediaEngine, params w
 	return nil
 }
 
-func SetupProducerMediaEngineForKind(me *webrtc.MediaEngine, kind MediaKind) error {
-	for _, codec := range GetCodecsForKind(kind) {
-		err := me.RegisterCodec(codec, webrtc.RTPCodecType(kind))
-		if err != nil {
-			return err
-		}
-	}
-	for _, hExt := range GetHeaderExtensionForKind(kind) {
-		err := me.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
-			URI: hExt.URI,
-		}, webrtc.RTPCodecType(kind))
-		if err != nil {
-			return err
-		}
-	}
+// func SetupProducerMediaEngineForKind(me *webrtc.MediaEngine, kind MediaKind) error {
+// 	for _, codec := range GetCodecsForKind(kind) {
+// 		err := me.RegisterCodec(ParseRTPCodecParameterFromORTC(codec), webrtc.RTPCodecType(kind))
+// 		if err != nil {
+// 			return err
+// 		}
+// 	}
+// 	for _, hExt := range GetHeaderExtensionForKind(kind) {
+// 		err := me.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
+// 			URI: hExt.URI,
+// 		}, webrtc.RTPCodecType(kind))
+// 		if err != nil {
+// 			return err
+// 		}
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
-func GetCodecsForKind(kind MediaKind) []webrtc.RTPCodecParameters {
+func GetCodecsForKind(kind MediaKind) []RTPCodecParameters {
 	switch kind {
 	case AudioMediaKind:
-		return []webrtc.RTPCodecParameters{
+		return []RTPCodecParameters{
 			{
-				RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=20;useinbandfec=1", RTCPFeedback: nil},
-				PayloadType:        111,
+				MimeType:     webrtc.MimeTypeOpus,
+				ClockRate:    48000,
+				Channels:     2,
+				Parameters:   ParseFMTPToParameters("minptime=20;useinbandfec=1"),
+				RTCPFeedback: nil,
+				PayloadType:  111,
 			},
 		}
 	case VideoMediaKind:
-		videoRTCPFeedback := []webrtc.RTCPFeedback{{Type: webrtc.TypeRTCPFBGoogREMB, Parameter: ""}, {Type: webrtc.TypeRTCPFBTransportCC, Parameter: ""},
+		videoRTCPFeedback := []RTCPFeedback{{Type: webrtc.TypeRTCPFBGoogREMB, Parameter: ""}, {Type: webrtc.TypeRTCPFBTransportCC, Parameter: ""},
 			{Type: webrtc.TypeRTCPFBCCM, Parameter: "fir"}, {Type: webrtc.TypeRTCPFBNACK, Parameter: ""}, {Type: webrtc.TypeRTCPFBNACK, Parameter: "pli"}}
-		return []webrtc.RTPCodecParameters{
+		return []RTPCodecParameters{
 			{
-				RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000, Channels: 0, SDPFmtpLine: "", RTCPFeedback: videoRTCPFeedback},
-				PayloadType:        96,
+				MimeType:     webrtc.MimeTypeVP8,
+				ClockRate:    90000,
+				Channels:     0,
+				RTCPFeedback: videoRTCPFeedback,
+				PayloadType:  96,
 			},
 			{
-				RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: "video/rtx", ClockRate: 90000, Channels: 0, SDPFmtpLine: "apt=96", RTCPFeedback: nil},
-				PayloadType:        97,
+				MimeType:     "video/rtx",
+				ClockRate:    90000,
+				Channels:     0,
+				Parameters:   ParseFMTPToParameters("apt=96"),
+				RTCPFeedback: nil,
+				PayloadType:  97,
 			},
 		}
 	}
-	return []webrtc.RTPCodecParameters{}
+	return []RTPCodecParameters{}
 }
 
 func GetHeaderExtensionForKind(kind MediaKind) []webrtc.RTPHeaderExtensionParameter {
@@ -171,8 +182,8 @@ func DefaultRouterCapabilities() RTPCapabilities {
 			PreferredPayloadType: uint8(codec.PayloadType),
 			ClockRate:            codec.ClockRate,
 			Channels:             codec.Channels,
-			Parameters:           ParseFMTPToParameters(codec.SDPFmtpLine),
-			RTCPFeedback:         ParseRTCPFeedbackToORTC(codec.RTCPFeedback),
+			Parameters:           codec.Parameters,
+			RTCPFeedback:         codec.RTCPFeedback,
 			Kind:                 "audio",
 		})
 	}
@@ -183,8 +194,8 @@ func DefaultRouterCapabilities() RTPCapabilities {
 			PreferredPayloadType: uint8(codec.PayloadType),
 			ClockRate:            codec.ClockRate,
 			Channels:             codec.Channels,
-			Parameters:           ParseFMTPToParameters(codec.SDPFmtpLine),
-			RTCPFeedback:         ParseRTCPFeedbackToORTC(codec.RTCPFeedback),
+			Parameters:           codec.Parameters,
+			RTCPFeedback:         codec.RTCPFeedback,
 			Kind:                 "video",
 		})
 	}

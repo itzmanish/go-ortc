@@ -1,4 +1,4 @@
-package rtc
+package dtls
 
 // DTLSRole indicates the role of the DTLS transport.
 type DTLSRole byte
@@ -44,6 +44,6 @@ func (r DTLSRole) String() string {
 	case DTLSRoleServer:
 		return "server"
 	default:
-		return unknownStr
+		return "unknown"
 	}
 }

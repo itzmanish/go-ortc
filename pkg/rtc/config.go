@@ -13,37 +13,25 @@ type RouterConfig struct {
 }
 type WebRTCConfig struct {
 	me webrtc.MediaEngine
-	se SettingEngine
 }
 type SFUConfig struct {
 	bufferFactory *buffer.Factory
+	loggerFactory logging.LoggerFactory
 	routerConfig  RouterConfig
 }
 
 func NewSFUConfig(bff *buffer.Factory) (*SFUConfig, error) {
 	me := webrtc.MediaEngine{}
-	se := SettingEngine{
-		LoggerFactory: &logging.DefaultLoggerFactory{
+	return &SFUConfig{
+		loggerFactory: &logging.DefaultLoggerFactory{
 			Writer:          os.Stdout,
 			DefaultLogLevel: logging.LogLevelDebug,
 			ScopeLevels:     make(map[string]logging.LogLevel),
 		},
-		BufferFactory: bff.GetOrNew,
-	}
-	err := se.SetEphemeralUDPPortRange(40000, 50000)
-	if err != nil {
-		return nil, err
-	}
-	se.DisableMediaEngineCopy(true)
-	se.SetLite(true)
-	// FIXME: Only for debugging
-	// se.SetICETimeouts(5*time.Minute, 5*time.Minute, 5*time.Minute)
-	return &SFUConfig{
 		bufferFactory: bff,
 		routerConfig: RouterConfig{
 			transportConfig: WebRTCConfig{
 				me: me,
-				se: se,
 			},
 		},
 	}, nil

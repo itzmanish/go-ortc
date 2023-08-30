@@ -7,7 +7,8 @@ import (
 
 	"github.com/itzmanish/go-ortc/v2/pkg/logger"
 	"github.com/itzmanish/go-ortc/v2/pkg/rtc"
-	"github.com/pion/webrtc/v3"
+	"github.com/itzmanish/go-ortc/v2/pkg/rtc/dtls"
+	"github.com/itzmanish/go-ortc/v2/pkg/rtc/ice"
 )
 
 type Room struct {
@@ -120,9 +121,9 @@ func (r *Room) HandleIncomingMessage(peer *Peer, msg *WebSocketMessage, cb func(
 	case ConnectTransport:
 		{
 			var payload struct {
-				TransportId    uint                  `json:"transportId"`
-				DtlsParameters webrtc.DTLSParameters `json:"dtlsParameters"`
-				IceParameters  webrtc.ICEParameters  `json:"iceParameters"`
+				TransportId    uint                `json:"transportId"`
+				DtlsParameters dtls.DTLSParameters `json:"dtlsParameters"`
+				IceParameters  ice.ICEParameters   `json:"iceParameters"`
 			}
 			err := json.Unmarshal([]byte(msg.Payload), &payload)
 			if err != nil {

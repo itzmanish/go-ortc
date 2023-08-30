@@ -1,10 +1,18 @@
-package rtc
+package ice
 
 import (
 	"fmt"
 
 	"github.com/pion/ice/v2"
 )
+
+// ICECandidateInit is used to serialize ice candidates
+type ICECandidateInit struct {
+	Candidate        string  `json:"candidate"`
+	SDPMid           *string `json:"sdpMid"`
+	SDPMLineIndex    *uint16 `json:"sdpMLineIndex"`
+	UsernameFragment *string `json:"usernameFragment"`
+}
 
 // ICECandidate represents a ice candidate
 type ICECandidate struct {
@@ -82,6 +90,45 @@ func (c ICECandidate) toICE() (ice.Candidate, error) {
 			Priority:    c.Priority,
 		}
 		return ice.NewCandidateHost(&config)
+	case ICECandidateTypeSrflx:
+		config := ice.CandidateServerReflexiveConfig{
+			CandidateID: candidateID,
+			Network:     c.Protocol.String(),
+			Address:     c.Address,
+			Port:        int(c.Port),
+			Component:   c.Component,
+			Foundation:  c.Foundation,
+			Priority:    c.Priority,
+			RelAddr:     c.RelatedAddress,
+			RelPort:     int(c.RelatedPort),
+		}
+		return ice.NewCandidateServerReflexive(&config)
+	case ICECandidateTypePrflx:
+		config := ice.CandidatePeerReflexiveConfig{
+			CandidateID: candidateID,
+			Network:     c.Protocol.String(),
+			Address:     c.Address,
+			Port:        int(c.Port),
+			Component:   c.Component,
+			Foundation:  c.Foundation,
+			Priority:    c.Priority,
+			RelAddr:     c.RelatedAddress,
+			RelPort:     int(c.RelatedPort),
+		}
+		return ice.NewCandidatePeerReflexive(&config)
+	case ICECandidateTypeRelay:
+		config := ice.CandidateRelayConfig{
+			CandidateID: candidateID,
+			Network:     c.Protocol.String(),
+			Address:     c.Address,
+			Port:        int(c.Port),
+			Component:   c.Component,
+			Foundation:  c.Foundation,
+			Priority:    c.Priority,
+			RelAddr:     c.RelatedAddress,
+			RelPort:     int(c.RelatedPort),
+		}
+		return ice.NewCandidateRelay(&config)
 	default:
 		return nil, fmt.Errorf("%w: %s", errICECandidateTypeUnknown, c.Typ)
 	}
@@ -91,6 +138,12 @@ func convertTypeFromICE(t ice.CandidateType) (ICECandidateType, error) {
 	switch t {
 	case ice.CandidateTypeHost:
 		return ICECandidateTypeHost, nil
+	case ice.CandidateTypeServerReflexive:
+		return ICECandidateTypeSrflx, nil
+	case ice.CandidateTypePeerReflexive:
+		return ICECandidateTypePrflx, nil
+	case ice.CandidateTypeRelay:
+		return ICECandidateTypeRelay, nil
 	default:
 		return ICECandidateType(t), fmt.Errorf("%w: %s", errICECandidateTypeUnknown, t)
 	}

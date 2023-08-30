@@ -1,4 +1,4 @@
-package rtc
+package dtls
 
 import (
 	"crypto/ecdsa"
@@ -11,14 +11,14 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/itzmanish/go-ortc/v2/internal/mux"
 	"github.com/itzmanish/go-ortc/v2/internal/util"
+	"github.com/itzmanish/go-ortc/v2/pkg/buffer"
+	"github.com/itzmanish/go-ortc/v2/pkg/logger"
+	"github.com/itzmanish/go-ortc/v2/pkg/rtc/ice"
 	"github.com/pion/dtls/v2"
 	"github.com/pion/dtls/v2/pkg/crypto/fingerprint"
-	"github.com/pion/interceptor"
-	"github.com/pion/logging"
 	"github.com/pion/rtcp"
 	"github.com/pion/srtp/v2"
 	"github.com/pion/webrtc/v3/pkg/rtcerr"
@@ -31,7 +31,6 @@ import (
 type DTLSTransport struct {
 	lock sync.RWMutex
 
-	iceTransport          *ICETransport
 	certificates          []Certificate
 	remoteParameters      DTLSParameters
 	remoteCertificate     []byte
@@ -40,63 +39,50 @@ type DTLSTransport struct {
 
 	onStateChangeHandler func(DTLSTransportState)
 
-	conn *dtls.Conn
+	conn         *dtls.Conn
+	iceTransport *ice.ICETransport
 
 	srtpSession, srtcpSession   atomic.Value
 	srtpEndpoint, srtcpEndpoint *mux.Endpoint
 	simulcastStreams            []*srtp.ReadStreamSRTP
 	srtpReady                   chan struct{}
 
-	dtlsMatcher   mux.MatchFunc
-	settingEngine *SettingEngine
-	interceptor   interceptor.Interceptor
-
-	log logging.LeveledLogger
+	bufferFactory *buffer.Factory
+	log           logger.Logger
 }
 
 // NewDTLSTransport creates a new DTLSTransport.
 // This constructor is part of the ORTC API. It is not
 // meant to be used together with the basic WebRTC API.
-func NewDTLSTransport(transport *ICETransport, certificates []Certificate) (*DTLSTransport, error) {
+func NewDTLSTransport(iceServer *ice.ICETransport, bufferFactory *buffer.Factory) (*DTLSTransport, error) {
 	t := &DTLSTransport{
-		interceptor:  &interceptor.NoOp{},
-		iceTransport: transport,
-		state:        DTLSTransportStateNew,
-		dtlsMatcher:  mux.MatchDTLS,
-		srtpReady:    make(chan struct{}),
-		log:          transport.settingEngine.LoggerFactory.NewLogger("DTLSTransport"),
+		state:         DTLSTransportStateNew,
+		srtpReady:     make(chan struct{}),
+		bufferFactory: bufferFactory,
+		iceTransport:  iceServer,
+		log:           logger.NewLogger("DTLSTransport"),
 	}
 
-	if len(certificates) > 0 {
-		now := time.Now()
-		for _, x509Cert := range certificates {
-			if !x509Cert.Expires().IsZero() && now.After(x509Cert.Expires()) {
-				return nil, &rtcerr.InvalidAccessError{Err: ErrCertificateExpired}
-			}
-			t.certificates = append(t.certificates, x509Cert)
-		}
-	} else {
-		sk, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			return nil, &rtcerr.UnknownError{Err: err}
-		}
-		certificate, err := GenerateCertificate(sk)
-		if err != nil {
-			return nil, err
-		}
-		t.certificates = []Certificate{*certificate}
+	sk, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, &rtcerr.UnknownError{Err: err}
 	}
+	certificate, err := GenerateCertificate(sk)
+	if err != nil {
+		return nil, err
+	}
+	t.certificates = []Certificate{*certificate}
 
 	return t, nil
 }
 
 // ICETransport returns the currently-configured *ICETransport or nil
 // if one has not been configured
-func (t *DTLSTransport) ICETransport() *ICETransport {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-	return t.iceTransport
-}
+// func (t *DTLSTransport) ICETransport() *ICETransport {
+// 	t.lock.RLock()
+// 	defer t.lock.RUnlock()
+// 	return t.iceTransport
+// }
 
 // onStateChange requires the caller holds the lock
 func (t *DTLSTransport) onStateChange(state DTLSTransportState) {
@@ -177,35 +163,7 @@ func (t *DTLSTransport) GetRemoteCertificate() []byte {
 func (t *DTLSTransport) startSRTP() error {
 	srtpConfig := &srtp.Config{
 		Profile:       t.srtpProtectionProfile,
-		BufferFactory: t.settingEngine.BufferFactory,
-		LoggerFactory: t.settingEngine.LoggerFactory,
-	}
-	if t.settingEngine.replayProtection.SRTP != nil {
-		srtpConfig.RemoteOptions = append(
-			srtpConfig.RemoteOptions,
-			srtp.SRTPReplayProtection(*t.settingEngine.replayProtection.SRTP),
-		)
-	}
-
-	if t.settingEngine.disableSRTPReplayProtection {
-		srtpConfig.RemoteOptions = append(
-			srtpConfig.RemoteOptions,
-			srtp.SRTPNoReplayProtection(),
-		)
-	}
-
-	if t.settingEngine.replayProtection.SRTCP != nil {
-		srtpConfig.RemoteOptions = append(
-			srtpConfig.RemoteOptions,
-			srtp.SRTCPReplayProtection(*t.settingEngine.replayProtection.SRTCP),
-		)
-	}
-
-	if t.settingEngine.disableSRTCPReplayProtection {
-		srtpConfig.RemoteOptions = append(
-			srtpConfig.RemoteOptions,
-			srtp.SRTCPNoReplayProtection(),
-		)
+		BufferFactory: t.bufferFactory.GetOrNew,
 	}
 
 	connState := t.conn.ConnectionState()
@@ -256,19 +214,6 @@ func (t *DTLSTransport) role() DTLSRole {
 	default:
 	}
 
-	// If SettingEngine has an explicit role
-	switch t.settingEngine.answeringDTLSRole {
-	case DTLSRoleServer:
-		return DTLSRoleServer
-	case DTLSRoleClient:
-		return DTLSRoleClient
-	default:
-	}
-
-	// Remote was auto and no explicit role was configured via SettingEngine
-	if t.iceTransport.Role() == ICERoleControlling {
-		return DTLSRoleServer
-	}
 	return defaultDtlsRoleAnswer
 }
 
@@ -288,8 +233,8 @@ func (t *DTLSTransport) Start(remoteParameters DTLSParameters) error {
 			return DTLSRole(0), nil, &rtcerr.InvalidStateError{Err: fmt.Errorf("%w: %s", errInvalidDTLSStart, t.state)}
 		}
 
-		t.srtpEndpoint = t.iceTransport.newEndpoint(mux.MatchSRTP)
-		t.srtcpEndpoint = t.iceTransport.newEndpoint(mux.MatchSRTCP)
+		t.srtpEndpoint = t.iceTransport.NewEndpoint(mux.MatchSRTP)
+		t.srtcpEndpoint = t.iceTransport.NewEndpoint(mux.MatchSRTCP)
 		t.remoteParameters = remoteParameters
 
 		cert := t.certificates[0]
@@ -303,31 +248,18 @@ func (t *DTLSTransport) Start(remoteParameters DTLSParameters) error {
 				},
 			},
 			SRTPProtectionProfiles: func() []dtls.SRTPProtectionProfile {
-				if len(t.settingEngine.srtpProtectionProfiles) > 0 {
-					return t.settingEngine.srtpProtectionProfiles
-				}
-
 				return defaultSrtpProtectionProfiles()
 			}(),
 			ClientAuth:         dtls.RequireAnyClientCert,
-			LoggerFactory:      t.settingEngine.LoggerFactory,
 			InsecureSkipVerify: true,
 		}, nil
 	}
 
 	var dtlsConn *dtls.Conn
-	dtlsEndpoint := t.iceTransport.newEndpoint(mux.MatchDTLS)
+	dtlsEndpoint := t.iceTransport.NewEndpoint(mux.MatchDTLS)
 	role, dtlsConfig, err := prepareTransport()
 	if err != nil {
 		return err
-	}
-
-	if t.settingEngine.replayProtection.DTLS != nil {
-		dtlsConfig.ReplayProtectionWindow = int(*t.settingEngine.replayProtection.DTLS)
-	}
-
-	if t.settingEngine.dtls.retransmissionInterval != 0 {
-		dtlsConfig.FlightInterval = t.settingEngine.dtls.retransmissionInterval
 	}
 
 	// Connect as DTLS Client/Server, function is blocking and we
@@ -370,27 +302,6 @@ func (t *DTLSTransport) Start(remoteParameters DTLSParameters) error {
 		return errNoRemoteCertificate
 	}
 	t.remoteCertificate = remoteCerts[0]
-
-	if !t.settingEngine.disableCertificateFingerprintVerification {
-		parsedRemoteCert, err := x509.ParseCertificate(t.remoteCertificate)
-		if err != nil {
-			if closeErr := dtlsConn.Close(); closeErr != nil {
-				t.log.Error(err.Error())
-			}
-
-			t.onStateChange(DTLSTransportStateFailed)
-			return err
-		}
-
-		if err = t.validateFingerPrint(parsedRemoteCert); err != nil {
-			if closeErr := dtlsConn.Close(); closeErr != nil {
-				t.log.Error(err.Error())
-			}
-
-			t.onStateChange(DTLSTransportStateFailed)
-			return err
-		}
-	}
 
 	t.conn = dtlsConn
 	t.onStateChange(DTLSTransportStateConnected)
@@ -461,38 +372,4 @@ func (t *DTLSTransport) storeSimulcastStream(s *srtp.ReadStreamSRTP) {
 	defer t.lock.Unlock()
 
 	t.simulcastStreams = append(t.simulcastStreams, s)
-}
-
-func (t *DTLSTransport) streamsForSSRC(ssrc SSRC, streamInfo interceptor.StreamInfo) (*srtp.ReadStreamSRTP, interceptor.RTPReader, *srtp.ReadStreamSRTCP, interceptor.RTCPReader, error) {
-	srtpSession, err := t.getSRTPSession()
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	rtpReadStream, err := srtpSession.OpenReadStream(uint32(ssrc))
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	rtpInterceptor := t.interceptor.BindRemoteStream(&streamInfo, interceptor.RTPReaderFunc(func(in []byte, a interceptor.Attributes) (n int, attributes interceptor.Attributes, err error) {
-		n, err = rtpReadStream.Read(in)
-		return n, a, err
-	}))
-
-	srtcpSession, err := t.getSRTCPSession()
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	rtcpReadStream, err := srtcpSession.OpenReadStream(uint32(ssrc))
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	rtcpInterceptor := t.interceptor.BindRTCPReader(interceptor.RTPReaderFunc(func(in []byte, a interceptor.Attributes) (n int, attributes interceptor.Attributes, err error) {
-		n, err = rtcpReadStream.Read(in)
-		return n, a, err
-	}))
-
-	return rtpReadStream, rtpInterceptor, rtcpReadStream, rtcpInterceptor, nil
 }
